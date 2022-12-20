@@ -1,0 +1,195 @@
+---
+title: "CTCF Analysis"
+author: "Coleman Breen"
+date: "2022-11-28"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(poolr)
+library(GenomicRanges)
+```
+
+```{r}
+pvals <- fread("../DataRaw/pvals.bed")
+ctcfs <- fread("../DataReference/GRCh38-CTCF.bed", 
+               col.names = c("chr", "start", "end", "V1", "V2", "description"),              ) %>% dplyr::select(c(chr, start, end, description))
+```
+
+
+# CTCF 
+
+```{r}
+ctcfs %>% 
+  dplyr::mutate(width = end - start) %>% 
+  ggplot(aes(x = width)) +
+  geom_histogram(bins = 50) +
+  theme_minimal() +
+  ggtitle("Width of CTCF-binding motifs in ENCODE database")
+```
+
+# Overlap 
+
+```{r}
+pvals.gr <- makeGRangesFromDataFrame(pvals, 
+                                     keep.extra.columns = T, 
+                                     ignore.strand = T, 
+                                     starts.in.df.are.0based = T
+                                     )
+
+
+ctcf.gr <- makeGRangesFromDataFrame(ctcfs, 
+                                    keep.extra.columns = T, 
+                                    ignore.strand = T, 
+                                    starts.in.df.are.0based = T
+                                    )
+
+# Overlap
+overlaps <- findOverlaps(pvals.gr, ctcf.gr)
+
+```
+
+## How many CpGs per CTCF?
+
+```{r}
+
+n.cpgs <- length(queryHits(overlaps))
+n.unique.cpgs <- length(unique(queryHits(overlaps)))
+
+print(paste("Number of times a CpG overlaps a CTCF domain:", n.cpgs))
+print(paste("Number of unique CpGs in at least one CTCF domain:", n.unique.cpgs))
+
+```
+
+There are ~2.8 million instances where a CpG overlaps a CTCF. Are CTCF domains overlapping? How many CpGs per CTCF? How mnay CTCFs without any CpGs?
+
+```{r}
+print(paste("Number of CTCF domains to start:", length(ctcf.gr)))
+
+print(paste("Number of CTCF domains with at least one CpG:",
+            length(unique(subjectHits(overlaps)))))
+```
+Of the 450k CTCF binding domains, we lose about 50k because they do not have any CpGs.
+
+```{r}
+data.frame(overlaps) %>% 
+  group_by(subjectHits) %>%
+  summarize(N.CpGs = n()) %>% 
+  ggplot(aes(x = N.CpGs)) +
+  geom_histogram(bins = 50) +
+  theme_minimal() +
+  ggtitle("Majority of CTCF-binding domains have fewer than 10 CpGs")
+```
+
+# Do the p-values 
+
+```{r}
+ix <- queryHits(overlaps)
+
+pvals[ix, ] %>% 
+  ggplot(aes(x = p.corrected)) +
+  geom_histogram() +
+  theme_minimal()
+```
+
+Low p-value sites are somewhat absent from CTCF-binding domains. However, if there are, say, 10 out of 10 CpGs which are DMPs in one CTCF, that might mean there is something interesting nearby.
+
+Show the p-values associated with one CTCF region (arbitrarily picked 71).
+
+```{r}
+
+pvals.ix <- queryHits(overlaps)
+ctcf.ix <- subjectHits(overlaps)
+
+fisher_wrapper <- function(z){
+   # Which CpGs are in the zth ctcf
+  keepix <- (ctcf.ix == z)
+  pp <- pvals.gr[pvals.ix[keepix]]$p.corrected
+  
+  # Run Fisher's method to combine p-values
+  fisher.out <- fisher(pp)
+  fisher.out$p
+}
+
+z_range <- unique(ctcf.ix)
+
+```
+
+Now do the same thing for all 400k regions.
+
+```{r}
+
+ofile <- "../DataDerived/ctcf.fisher.RData"
+
+if (file.exists(ofile)){
+  load(ofile)
+  
+} else {
+  print("Computing Fisher p-values, this may take 10-15 mins")
+  
+  # Run the Fisher routine on all the CTCF binding domains
+  ctcf.p <- 
+    do.call(rbind,
+            parallel::mclapply(
+            X=z_range, 
+            FUN=fisher_wrapper, 
+            mc.cores = 6
+            )
+          )
+    
+  # Count the number of CpGs in the CTCF domains of interest
+  tmp <- data.frame(
+    cpgs.ix = pvals.ix,
+    ctcf.ix = ctcf.ix
+  ) %>% 
+    group_by(ctcf.ix) %>% 
+    summarize(N.CpG = n())
+    
+  # Pack the Fisher's p-value, CTCF start/stop into one df
+  ctcfs.df <- cbind(
+    ctcfs[z_range],
+    data.frame(p.fisher = ctcf.p),
+    N.CpG = tmp$N.CpG
+    )
+  
+  # Write out data for use next time 
+  save(list = c("ctcfs.df"), file = ofile)
+  
+} 
+```
+
+
+```{r}
+
+ctcfs.df %>% 
+  ggplot(aes(x = p.fisher)) +
+  geom_histogram() +
+  theme_minimal()
+
+```
+
+
+```{r}
+ctcfs.df %>%
+  dplyr::mutate(bin = cut(N.CpG,
+                          breaks = c(0, 5, 10, 25, 75), 
+                          right = T)) %>% 
+  ggplot(aes(x = p.fisher, fill = bin)) +
+  geom_histogram(bins = 50, aes(y = after_stat(density))) +
+  facet_wrap(.~bin) +
+  theme_minimal()
+```
+The significant CTCF binding-domains seem to be spread (roughly) by CTCF-binding domain size.
+
+```{r}
+sum(ctcfs.df$p.fisher < 0.01 / nrow(ctcfs.df))
+```
+
+
+# CTCF
+
+> CTCF is known to bind a CpGrich consensus sequence that is usually unmethylated, as CTCF preferentially binds to unmethylated elements
+
+-Kim et. al. 

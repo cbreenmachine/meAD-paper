@@ -1,0 +1,42 @@
+---
+title: "Explore Coverage"
+author: "Coleman Breen"
+date: "2022-12-07"
+output: pdf_document
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+
+c.df <- fread("../../me-hc-bayes/dataRaw/chr17.Cov.bed")
+pvals.df <- fread("../DataRaw/pvals.bed") %>% dplyr::filter(chr == "chr17")
+
+nrow(c.df) == nrow(pvals.df)
+all(c.df$chromStart == pvals.df$start)
+```
+
+```{r}
+
+mincov <- apply(c.df, 1, min)
+keepix <- mincov > 5
+
+medcov <- apply(c.df, 1, median)
+
+n.sig <- sum(pvals.df$lfdr < 0.05)
+n.sig2 <- sum(pvals.df[keepix, ]$lfdr < 0.05)
+
+n.sig
+n.sig2
+
+```
+
+9400 significant without filter
+```{r}
+png("../Figs/medianCoverage.png")
+hist(medcov, xlim = c(0, 50), breaks = 300,
+     main = "Median coverage after merging strands (chr17)",
+     xlab = "Median coverage")
+dev.off()
+```
+

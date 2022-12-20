@@ -1,0 +1,74 @@
+---
+title: "Compare DMPs from Array"
+author: "Coleman Breen"
+date: "2022-11-29"
+output: pdf_document
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(GenomicRanges)
+```
+
+
+```{r}
+
+# Keep all positions
+df <- fread("../DataRaw/pvals.bed")
+
+whole.dmps <- df %>% dplyr::filter(lfdr < 0.05)
+
+array.dmps <- read_csv(
+  "../DataReference/madrid_cpgs_list.csv", 
+  skip = 1,
+  show_col_types = F) %>%
+  janitor::clean_names() %>%
+  dplyr::mutate(chr = str_split_fixed(hg38_coordinates, ":", 2)[ ,1],
+                start = as.numeric(str_split_fixed(hg38_coordinates, ":", 2)[ ,2]) - 1,
+                end = start + 2) %>% 
+  dplyr::select(chr, start, end) %>%
+  drop_na()
+  
+```
+
+
+```{r}
+# To GRanges
+whole.gr <- makeGRangesFromDataFrame(df,
+                                     keep.extra.columns = T,
+                                     ignore.strand = T,
+                                     starts.in.df.are.0based = T)
+
+array.gr <- makeGRangesFromDataFrame(array.dmps,
+                                     ignore.strand = T,
+                                     starts.in.df.are.0based = T)
+```
+
+
+
+```{r}
+all.overlaps <- findOverlaps(array.gr, whole.gr, minoverlap = 2)
+length(all.overlaps)
+
+```
+
+
+```{r}
+sub.df <- mcols(whole.gr[subjectHits(all.overlaps), ])
+
+p <- as.data.frame(sub.df) %>% 
+  ggplot(aes(x = p.corrected)) +
+  geom_histogram() +
+  theme_minimal() +
+  ggtitle("Corrected p-values of 463 overlapping DMPs")
+
+cowplot::save_plot(
+  "../Figs/arrayComps/pCorrectedOfOverlappingDMPs.png",
+  p
+)
+
+summary(sub.df$lfdr)
+```
+
+

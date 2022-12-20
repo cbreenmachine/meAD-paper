@@ -1,0 +1,48 @@
+---
+title: "Munging Enhancer Data"
+author: "Coleman Breen"
+date: "2022-12-13"
+output: pdf_document
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+```
+
+```{r}
+enhancer.df <- fread("../DataReference/enhancersFromFANTOM/human_permissive_enhancers_phase_1_and_2_expression_tpm_matrix.txt")
+
+samples.df <- read_delim(
+  "../DataReference/enhancersFromFANTOM/Human.sample_name2library_id.txt", 
+  delim = "\t",
+  col_names = c("description", "id"))
+
+head(samples.df)
+
+```
+
+
+
+# Munging Enhancer Data
+
+FANTOM provides enhancer calls for a ton of tissue types. If you want to look at specific tissue enhancers, you can use the FANTOM-UCSC integration tool. If you want to download all of the enhancers, you can do so. But then you lose tissue annotation.
+
+It appears we have three individual samples for blood and one donor / one pool for brain. What does this mean?
+
+```{r}
+samples_of_interest <- c("CNhs11958",
+                         "CNhs10617", "CNhs11796",
+                         "CNhs12002", "CNhs10860")
+
+samples.df %>%
+  dplyr::filter(id %in% samples_of_interest)
+```
+
+How well do these assays agree with each other?
+
+```{r}
+round(cor(enhancer.df[ , ..samples_of_interest]), 2)
+```
+
+The first, fourth, and fifth samples are the bloods--all have correlations above 0.74. 

@@ -1,0 +1,192 @@
+---
+title: "CTCF Analysis"
+author: "Coleman Breen"
+date: "2022-11-28"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(poolr)
+library(GenomicRanges)
+library(ensembldb)
+library(clusterProfiler)
+library(EnsDb.Hsapiens.v86)
+
+endb <- EnsDb.Hsapiens.v86
+```
+
+```{r}
+pvals <- fread("../DataRaw/pvals.bed")
+enhancers <- fread("../DataReference/enhancer_promoter_map.hg38.BED11") %>% select(-strand)
+```
+
+
+```{r}
+pvals.gr <- makeGRangesFromDataFrame(pvals, 
+                                     keep.extra.columns = T, 
+                                     ignore.strand = T, 
+                                     starts.in.df.are.0based = T
+                                     )
+
+
+enhancer.gr <- makeGRangesFromDataFrame(enhancers, 
+                                        seqnames.field = "e.chr",
+                                        start.field = "e.start",
+                                        end.field = "e.end",
+                                        keep.extra.columns = T, 
+                                        ignore.strand = T, 
+                                        starts.in.df.are.0based = T
+                                        )
+
+# Overlap
+overlaps <- findOverlaps(pvals.gr, enhancer.gr)
+
+```
+
+# Do the p-values 
+
+```{r}
+ix <- queryHits(overlaps)
+
+pvals[ix, ] %>% 
+  ggplot(aes(x = p.corrected)) +
+  geom_histogram() +
+  theme_minimal()
+```
+
+Low p-value sites are somewhat absent from CTCF-binding domains. However, if there are, say, 10 out of 10 CpGs which are DMPs in one CTCF, that might mean there is something interesting nearby.
+
+Show the p-values associated with one CTCF region (arbitrarily picked 71).
+
+```{r}
+
+pvals.ix <- queryHits(overlaps)
+ref.ix <- subjectHits(overlaps)
+
+fisher_wrapper <- function(z){
+   # Which CpGs are in the zth ctcf
+  keepix <- (ref.ix == z)
+  pp <- pvals.gr[pvals.ix[keepix]]$p.corrected
+  
+  # Run Fisher's method to combine p-values
+  fisher.out <- fisher(pp)
+  fisher.out$p
+}
+
+z_range <- unique(ref.ix)
+
+```
+
+Now do the same thing for all 400k regions.
+
+```{r}
+# Run the Fisher routine on all the CTCF binding domains
+enhancer.p <- 
+  do.call(rbind,
+          parallel::mclapply(
+          X=z_range, 
+          FUN=fisher_wrapper, 
+          mc.cores = 6
+          )
+        )
+```
+
+
+```{r}
+# Count the number of CpGs in the CTCF domains of interest
+tmp <- data.frame(
+  cpgs.ix = pvals.ix,
+  ref.ix = ref.ix
+) %>% 
+  group_by(ref.ix) %>% 
+  summarize(N.CpG = n())
+    
+# Pack the Fisher's p-value, CTCF start/stop into one df
+out.df <- cbind(
+  enhancers[z_range],
+  data.frame(p.fisher = enhancer.p),
+  N.CpG = tmp$N.CpG
+  ) %>% 
+  unite("e.ID", c(e.chr, e.start), sep = ":") %>%
+  distinct(e.ID, .keep_all = T)
+  
+# Write out data for use next time 
+save(list = c("enhancer_promoter.df"), file = ofile)
+
+```
+
+
+```{r}
+
+p <- out.df  %>%
+  ggplot(aes(x = p.fisher)) +
+  geom_histogram(bins = 50) +
+  theme_minimal() +
+  ggtitle("Fisher's p-values for ~22k blood-specific enhancers")
+
+cowplot::save_plot(filename = "../Figs/Enhancers/fisherCorrectedP.hist.png", p)
+
+```
+
+We see something similar with CTCF sites--bimodal. Correction needed? 
+
+```{r}
+sum(out.df$p.fisher < 0.01 / nrow(out.df))
+```
+
+606 significant enhancers at Bonferroni-adjusted level of 0.01.
+
+# Annotate to genes
+
+```{r}
+
+# Map back to promoters
+sig.IDs <- out.df %>% 
+  dplyr::filter(p.fisher < 0.01 / nrow(.)) %>%
+  dplyr::pull(ID)
+
+sum(enhancers$ID %in% sig.IDs)
+
+sig.promoters <- enhancers %>%
+  dplyr::filter(ID %in% sig.IDs) %>%
+  makeGRangesFromDataFrame(
+    seqnames.field = "p.chr",
+    start.field = "p.start",
+    end.field = "p.end",
+    strand.field = "p.strand"
+  )
+
+
+```
+
+606 significant enhancers map to 609 significant promoters.
+
+```{r}
+genes <- genes(endb)
+seqlevelsStyle(genes) <- "UCSC"
+
+keepix <- nearest(sig.promoters, genes)
+
+genes_list <- genes$gene_id[keepix]
+
+
+go.out <- clusterProfiler::enrichGO(genes_list, 
+                                    keyType = "ENSEMBL", 
+                                    ont="ALL",
+                                    OrgDb = "org.Hs.eg.db")
+```
+
+```{r}
+data.frame(go.out) %>%
+  arrange(p.adjust) %>%
+  dplyr::select(c(Description, GeneRatio, p.adjust, ONTOLOGY)) %>%
+  head(25) %>%
+  ggplot(aes(x = Description, y = p.adjust, fill = ONTOLOGY)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() -> p
+
+```
+

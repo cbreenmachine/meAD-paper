@@ -1,4 +1,3 @@
-# functions_overlap_regions_compute_p.R
 # Given two GenomicRegions (one with pvals)
 # and one with regions to overlap,
 # we can compute the p-values with min(p in that region)

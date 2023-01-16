@@ -5,14 +5,16 @@ library(data.table)
 library(GenomicRanges)
 library(rtracklayer)
 library(liftOver)
+library(UpSetR)
 
-REF.CHAIN.PATH <- "../../DataReference/hg19ToHg38.over.chain"
+REF.CHAIN.PATH <- "../../DataReference/hg38ToHg19.over.chain"
+
 NATGEN.PATH <- "../../DataReference/NatureGenetics042022_AD_genes.txt"
 DMR.PATH <- "../../DataRaw/2022-12-28-ExperimentSummary-v1/DMR.pis.bed"
 OFILE <- "../../DataDerived/DMRs-overlapped-PCHi-C.bed"
+FIG.DIR <- "../../Figs/PCHi-C/"
 
 genes <- sort(as.vector(read.table(NATGEN.PATH)$V1))
-
 dmrs <- fread(DMR.PATH)
 
 keep.cols <- c("chr.dmr", "start.dmr", "end.dmr",
@@ -29,16 +31,13 @@ dmrs.gr <- dmrs %>%
                            end.field = "end.dmr",
                            keep.extra.columns = T)
 
-data <- fread("../../DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")
-names(data)
-
-# Baits are essentially genes
-length(unique(data.gr$baitName))
-
-# Plug in different genes and you'll find them here
-sum(str_detect(unique(data.gr$baitName), "RBFOX"), na.rm = T)
-
 chain <- import.chain(REF.CHAIN.PATH)
+
+dmrs.lifted.gr <- unlist(liftOver(dmrs.gr, chain))
+
+
+# Now the PCHI-C data (don't lift; keep in hg19)
+data <- fread("../../DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")
 
 # Don't map baits (genic loci),
 # instead map the "other ends", which are regulatory
@@ -47,13 +46,18 @@ data.gr <- makeGRangesFromDataFrame(data,
                                     start.field = "oeStart",
                                     end.field = "oeEnd",
                                     keep.extra.columns = T)
+
 # Rename to chr1 format
 seqlevelsStyle(data.gr) <- "UCSC"
-data.lifted.gr <- unlist(liftOver(data.gr, chain))
+
+# Plug in different genes and you'll find them here
+sum(str_detect(unique(data.gr$baitName), "RBFOX"), na.rm = T)
+
+
 
 
 # Overlap DMRs with PCHi-C ------------------------------------------------
-overlaps <- findOverlaps(dmrs.gr, data.lifted.gr)
+overlaps <- findOverlaps(dmrs.lifted.gr, data.gr)
 
 print(paste0("N DMRs considered: " , length(dmrs.gr)))
 N <- length(unique(queryHits(overlaps)))
@@ -61,11 +65,14 @@ print(paste0("N unique DMRs overlapping an 'other end': ", N))
 
 dmr.ix <- queryHits(overlaps)
 data.ix <- subjectHits(overlaps)
-bait.genes <- sort(unique(data.lifted.gr[data.ix]$"baitName"))
+bait.genes <- sort(unique(data.gr[data.ix]$"baitName"))
 
 # Join
-a <- as.data.frame(dmrs.gr[dmr.ix])
-b <- as.data.frame(data.lifted.gr[data.ix])[, -1:-5]
+a <- as.data.frame(dmrs.lifted.gr[dmr.ix])
+b <- as.data.frame(data.gr[data.ix])[, -1:-5]
+
+# Use the interactions later
+interactions <- as.data.frame(data.lifted.gr[data.ix])
 
 result <- cbind(a, b)
 dplyr::select(result, c(nearest_gene_name, baitName)) %>%
@@ -105,4 +112,75 @@ out <-
 
 write_tsv(out, file = OFILE)
 
+
+
+# UpSet Plot Of Genes -----------------------------------------------------
+upset.df <- as.data.frame(ifelse(result[ , celltypes] < 5, 0, 1))
+upset.df$Name <- make.names(result$baitName, unique = T)
+# upset.df[ ,"Name"] <- as.vector(make.names(result$baitName, unique = F))
+# rownames(upset.df) <- make.names(result$baitName, unique = F)
+
+UpSetR::upset(data = upset.df,
+              # sets = celltypes,
+              nsets = 5,
+              order.by = "freq",
+              )
+
+tmp <- upset.df %>%
+  pivot_longer(all_of(celltypes)) %>%
+  group_by(Name) %>%
+  summarize(n.sig = sum(value)) %>%
+  arrange(-n.sig) %>%
+  head(20) %>%
+  arrange(n.sig)
+
+tmp$Name <- factor(tmp$Name, levels = tmp$Name)
+
+p <- tmp %>%
+  dplyr::mutate(Name = as.factor(Name)) %>%
+  ggplot(aes(x = Name, y = n.sig)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  ylab("Number of significant cell types") +
+  xlab("Promoter gene name") +
+  ggtitle("Top 20 promoter-enhancer interactions") +
+  theme(plot.background = element_rect(fill = "white"))
+
+cowplot::save_plot(
+  filename = file.path(FIG.DIR, paste0(Sys.Date(), "-numsig-by-ct.png")),
+  base_width = 9,
+  p)
+
+
+
+
+# Format interactions -----------------------------------------------------
+
+score <- 55
+
+left.bed <- interactions[ ,c("seqnames", "start", "end")]
+left.bed$inter <- paste0(interactions$seqnames, ":",
+                         interactions$baitStart, "-",
+                         interactions$baitEnd,
+                         ",", score)
+
+
+right.bed <- interactions[ ,c("seqnames", "baitStart", "baitEnd")]
+names(right.bed) <- c("seqnames", "start", "end")
+right.bed$inter <- paste0(interactions$seqnames, ":",
+                          interactions$start, "-",
+                          interactions$end,
+                          ",", score)
+
+N <- nrow(left.bed)
+orderix <- rep(1:N, each = 2) + rep(c(0, N), times = N)
+pchic <- rbind(left.bed, right.bed)[orderix, ]
+
+
+write_tsv(pchic, col_names = F,
+          file = "../../DataDerived/interactions.txt")
+
 #END
+
+

@@ -1,6 +1,6 @@
 
 # Output directory
-pvals.file <- "../../DataRaw/pvals.bed"
+pvals.file <- "../../DataRaw/2023-01-10-ExperimentSummary-v2/pvals.bed"
 ODIR <- "../../Figs/Fig1/"
 
 # Constants

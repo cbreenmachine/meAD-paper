@@ -26,8 +26,9 @@ all <- plot_grid(volcano, right,
                  ncol = 2,
                  rel_widths = c(0.5, 0.5),
                  labels = c("A", NA)) +
-  theme(plot.background = element_rect(fill = "white"))
+  theme(plot.background = element_rect(fill = "white"),
+        panel.background = element_blank())
 
 save_plot(plot = all,
-          file.path(ODIR, "fig1.png"),
+          file.path(ODIR, paste0(Sys.Date(), "-fig1.png")),
           base_width = 8, base_height = 4)

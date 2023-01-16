@@ -28,8 +28,8 @@ sub.df <- data[-ix.to.ignore, ]
 
 # Handle colors
 sub.df$color <- "grey"
-sub.df$color[sub.df$lfdr < LFDR.CUT & sub.df$diagnostic_group_coded > 0] <- "hyper"
-sub.df$color[sub.df$lfdr < LFDR.CUT & sub.df$diagnostic_group_coded < 0] <- "hypo"
+sub.df$color[sub.df$lfdr < LFDR.CUT & sub.df$pi.diff > 0] <- "hyper"
+sub.df$color[sub.df$lfdr < LFDR.CUT & sub.df$pi.diff < 0] <- "hypo"
 
 # Order of color and order of pallete
 sub.df$color <- factor(sub.df$color, levels = c("grey", "hyper", "hypo"))
@@ -41,8 +41,8 @@ p.volcano <- sub.df %>%
   geom_jitter(size = 0.2, alpha = 1, height=1, width=0) +
   xlab("LOAD effect size\n(difference in adjusted methylation)") +
   ylab(expression(-log[10](lFDR))) +
-  scale_x_continuous(breaks = seq(-1, 1, 0.25), lim = c(-1, 1)) +
-  scale_y_continuous(breaks = c(0, 100, 200, 300), lim = c(0, 350)) +
+  scale_x_continuous(breaks = seq(-0.25, 0.25, 0.05), lim = c(-0.25, 0.25)) +
+  scale_y_continuous(breaks = c(0, 5, 10, 15, 20), lim = c(0, 20)) +
   scale_color_manual(values = my.pal) +
   theme_minimal() +
   theme(panel.grid.major.y = element_line(color = "grey", size=0.25),

@@ -8,26 +8,18 @@ suppressPackageStartupMessages({
     library(GenomicRanges)
     library(scales)
     library(cowplot)
-    library(argparse)
 })
 
-source("geneSchematics.functions.R")
-source("../get_expanded_ensdb.R")
+source("util-gene-schematics.R")
+source("util-ensdb.R")
 
-parser <- ArgumentParser()
-parser$add_argument("--ifile", default= "../../dataDerived/analysis-controlLOAD/test-diagnostic-group-coded/experimentSummary/pvals.bed", help='Where are the models stored')
-parser$add_argument("--odir", default= "../../figs/2022-paper/geneModels/natGenPaper", help='Where are the models stored')
-parser$add_argument("--dmrs_file", default= "../../dataDerived/analysis-controlLOAD/test-diagnostic-group-coded/experimentSummary/dmrs.all.bed", help='Where are the models stored')
-parser$add_argument("--genes_file", default= "../../dataReference/2022-natGenPaper.txt", help='Where are the genes')
-args <- parser$parse_args()
+IFILE <- "../../DataRaw/2022-12-28-ExperimentSummary-v1/pvals.bed"
+ODIR <- "../../Figs/Fig3/"
+DMRS.PATH <- "../../DataRaw/2022-12-28-ExperimentSummary-v1/DMRegions.bed"
 
-odir <- args$odir
-dir.create(odir, showWarn=F, recursive=T)
+df <- fread(IFILE)
 
-genes.list <- read.table(args$genes_file)[[1]]
-df <- fread(args$ifile)
-
-dmrs.df <- fread(args$dmrs_file) %>% 
+dmrs.df <- fread(DMRS.PATH) %>%
   dplyr::filter(dist_to_nearest_gene == 0)
 
 
@@ -55,27 +47,15 @@ ensdb.genes <- ensdb.genes[seqnames(ensdb.genes) %in% paste0("chr", 1:22)]
 
 seqlevelsStyle(data.gr) <- "UCSC"
 
-
-
-p <- make_figure("HLA-DRB1", data.gr, dmrs.df, ensdb.genes, ensdb)
-
-cowplot::save_plot("tmp.png", p)
-
+# p <- make_figure("HLA-DRB1", data.gr, dmrs.df, ensdb.genes, ensdb)
+# cowplot::save_plot("tmp.png", p)
 
 
 wrapper <- function(g){
-  ofile <- file.path(odir, paste0("geneModel-", g, ".png"))
+  ofile <- file.path(odir, paste0("schematic-", g, ".png"))
   p <- make_figure(g)
   cowplot::save_plot(ofile, p, base_width = 8, base_height = 5)
 }
-
-# keepix <- (genes.list %in% ensdb.genes$gene_name)
-# genes.list.sub <- genes.list[keepix]
-# print(genes.list[!keepix])
-
-# out <- lapply(X=genes.list.sub, FUN=wrapper)
-
-# common.legend <- get_common_legend()
 
 
 make_panel <- function(gene.list, data.gr, dmrs.df, ensdb.genes, ensdb){
@@ -83,7 +63,7 @@ make_panel <- function(gene.list, data.gr, dmrs.df, ensdb.genes, ensdb){
   p2 <- make_figure(gene.list[2], data.gr, dmrs.df, ensdb.genes, ensdb, xlab = F, ylab=F, legend = F)
   p3 <- make_figure(gene.list[3], data.gr, dmrs.df, ensdb.genes, ensdb, xlab = T, ylab=T, legend = F)
   p4 <- make_figure(gene.list[4], data.gr, dmrs.df, ensdb.genes, ensdb, xlab = T, ylab=F, legend = F)
-  
+
   common.legend <- get_common_legend()
 
   panel <- cowplot::plot_grid(p1, p2, p3, p4, nrow = 2)
@@ -95,34 +75,28 @@ make_panel <- function(gene.list, data.gr, dmrs.df, ensdb.genes, ensdb){
     )
 }
 
-PANEL.WIDTH <- 13
+PANEL.WIDTH <- 13.5
 PANEL.HEIGHT <- 7
 
 gene.lists <- list(
-  "ng1" = c("ANK3", "FERMT2", "HLA-DQA1", "INPP5D"),
-  "ng2" = c("PLCG2", "UMAD1", "JAZF1", "SLC24A4"),
-  "me1" = c("CEP112", "HLA-DRB1", "UMAD1", "RBFOX1"),
-  "me2" = c("NRG1", "PTPRD", "NOCT", "HNRNPM")
+  "paper" = c("HLA-DQA1", "HLA-DRB1", "MAPT", "UMAD1"),
+  "ryrs" = c("RYR1", "RYR2", "RYR3", "MAPT"),
+  "canonical" = c("APP", "APOE", "PSEN1", "PSEN2")
 )
 
 
 for (ii in 1:length(gene.lists)){
   n <- names(gene.lists)[ii]
   ll <- gene.lists[[ii]]
+  ofile <- file.path(ODIR, paste0("2023-01-03-panel-", n, ".png"))
 
   panel.out <- make_panel(ll,  data.gr, dmrs.df, ensdb.genes, ensdb)
-  cowplot::save_plot(file.path(odir, paste0("2022-11-21-panel-", n, ".png")), 
-      panel.out, 
-      base_height = PANEL.HEIGHT, 
+  cowplot::save_plot(
+      ofile,
+      panel.out,
+      base_height = PANEL.HEIGHT,
       base_width = PANEL.WIDTH)
 }
 
 
 
-
-
-
-
-panel.out <- make_panel(,  data.gr, dmrs.df, ensdb.genes, ensdb)
-cowplot::save_plot("2022-11-21-panel-2.png", panel.out, 
-  base_height = PANEL.HEIGHT, base_width = PANEL.WIDTH)

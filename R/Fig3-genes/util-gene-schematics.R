@@ -17,10 +17,11 @@ suppressPackageStartupMessages({
 ############ CONSTANTS #############
 ####################################
 SZ <- 1.1
-UP <- 5000
-DOWN <- 300
+UP <- 5000 # upstream of TSS
+DOWN <- 300 # downstream of Gene end
 
-POINT.SZ <- 0.5
+POINT.SZ <- 1.4
+POINT.ALPHA <- 0.5
 
 ALPHA <- 0.05 # significante level
 
@@ -29,10 +30,10 @@ C.HYPER <- "#0073C2FF" #blue
 C.HYPO <- "#EFC000FF" # Yellow
 
 YLIM.EFFECT <- c(-1, 1)
-YLIM.LFDR <- c(0, 300)
+YLIM.LFDR <- c(0, 150)
 
 # Set plot style...
-th <- theme( 
+th <- theme(
   legend.position = "none",
   panel.border = element_blank(),
   panel.grid.major.x = element_blank(),
@@ -41,7 +42,7 @@ th <- theme(
   plot.caption = element_text(hjust = 0),
   panel.background = element_rect(colour = NA),
   plot.background = element_rect(colour = NA)
-) 
+)
 
 theme_set(th)
 
@@ -54,11 +55,11 @@ theme_set(th)
 add_tss_arrow <- function(p, xs, st) {
   sz <- 1.25
   ys <- c(0.725, 1.275)
-  
+
   # How wide should arrow be
   delta.x <- xs[2] - xs[1]
   delta.y <- ys[2] - ys[1]
-  
+
   # If top strand
   if (st == "+"){
     tmp.df <- data.frame(
@@ -75,10 +76,10 @@ add_tss_arrow <- function(p, xs, st) {
       y2 = 2.35
     )
   }
-  
-  p.new <- p + 
-    geom_segment( 
-      aes(x = x1, y = y1, xend = x1, yend = y2, color = NULL), 
+
+  p.new <- p +
+    geom_segment(
+      aes(x = x1, y = y1, xend = x1, yend = y2, color = NULL),
       data=tmp.df, size = sz,
       lineend = "square", linejoin = "round"
     ) +
@@ -88,7 +89,7 @@ add_tss_arrow <- function(p, xs, st) {
       lineend = "butt", linejoin = "mitre",
       arrow = arrow(type = "closed",
                     length = unit(0.025, "npc"))
-    ) 
+    )
   return(p.new)
 }
 
@@ -100,11 +101,11 @@ add_promoter <- function(p, xs, st) {
     # st is strand ("+" or "-")
     sz <- 4
     ys <- c(1.725, 2.275)
-    
+
     # How wide should arrow be
     delta.x <- xs[2] - xs[1]
     # delta.y <- ys[2] - ys[1]
-    
+
     # Generate a small data frame representing
     # the x and y coordinates of the promoter
     if (st == "+"){
@@ -118,9 +119,9 @@ add_promoter <- function(p, xs, st) {
             y1 = 1.75, y2 = 2.25
         )
     }
-    
-    p.new <- p + 
-        geom_rect( 
+
+    p.new <- p +
+        geom_rect(
             aes(xmin = x1, xmax = x2, ymin = y1, ymax = y2),
             fill = "springgreen4", alpha = 1, data=tmp.df
         )
@@ -130,18 +131,18 @@ add_promoter <- function(p, xs, st) {
 
 get_gene_boundaries <- function(gene){
     # Tell me where the "gene" (including some UP nt upstream
-    # and some DOWN bp downstream) starts and ends, 
+    # and some DOWN bp downstream) starts and ends,
     # for plotting purposes
 
     # Top of plot, plots the gene introns/exons
     symbol.filt <- SymbolFilter(gene)
-        
+
     # Derived values for marking TSS
     ix <- which(ensdb.genes$gene_name == gene)
     left <- start(ensdb.genes[ix])
     right <- end(ensdb.genes[ix])
     st <- as.character(strand(ensdb.genes[ix])[1])
-    
+
     if (st == "+"){
         return(c(left - UP, right + DOWN))
     } else if (st == "-") {
@@ -160,18 +161,18 @@ plot_gene_model <- function(gene, ensdb.genes, ensdb){
 
     # Derived values for marking TSS
     ix <- which(ensdb.genes$gene_name == gene)
-    
+
     # Another filter to handle wonky genes
     chr.filt <- SeqNameFilter(seqnames(ensdb.genes[ix]))
     left <- start(ensdb.genes[ix])
     right <- end(ensdb.genes[ix])
     st <- as.character(strand(ensdb.genes[ix])[1])
-    
+
     ti <- bquote('Differential methylation in'~italic(.(gene)))
-  
-    tmp <- ensdb %>% 
+
+    tmp <- ensdb %>%
       autoplot(AnnotationFilterList(symbol.filt, chr.filt),
-               stat="identity", label=F, 
+               stat="identity", label=F,
                color=  C.GENE, fill = C.GENE) +
       ggtitle(ti) +
       ylab("") +
@@ -183,14 +184,14 @@ plot_gene_model <- function(gene, ensdb.genes, ensdb){
         plot.title = element_text(vjust = 0),
         axis.title.y=element_blank(),
         axis.ticks = element_blank()
-      ) + 
+      ) +
       ylim(c(0, 3.5))
-    
+
     p <- tmp@ggplot
 
-    p.2 <- add_promoter(p, c(left, right), st) 
+    p.2 <- add_promoter(p, c(left, right), st)
     p.3 <- add_tss_arrow(p.2, c(left, right), st)
-    
+
   return(p.3)
 }
 
@@ -202,10 +203,10 @@ plot_diffs <- function(gene, data.gr, ensdb.genes){
     #Find "rows" in GR that overlap the gene
     cpgs.ix <- queryHits(findOverlaps(data.gr, ensdb.genes[gene.ix, ], ignore.strand=T))
     data <- as.data.frame(data.gr[cpgs.ix, ])
-    
+
     data %>%
         ggplot(aes(x = start, y = pi.diff, color = color)) +
-        geom_point(size = POINT.SZ, alpha = 0.8) +
+        geom_point(size = POINT.SZ, alpha = POINT.ALPHA) +
         xlab("Genomic position") +
         ylab("Effect size") +
         scale_x_continuous(
@@ -228,13 +229,13 @@ plot_diffs <- function(gene, data.gr, ensdb.genes){
             plot.caption = element_text(hjust = 0),
             legend.position="none",
             axis.line.y.right = element_line(arrow = grid::arrow(length = unit(0.3, "cm"), ends = "both"))
-        ) 
+        )
 }
 
 
-#--> Bottom of plot, scatter of 
+#--> Bottom of plot, scatter of
 plot_points <- function(gene, data.gr, ensdb.genes){
-  
+
     y.lab <- bquote('-log'[10]*'(lFDR)')
 
     #Index by gene name
@@ -242,13 +243,13 @@ plot_points <- function(gene, data.gr, ensdb.genes){
 
     #Find "rows" in GR that overlap the gene
     cpgs.ix <- queryHits(findOverlaps(data.gr, ensdb.genes[gene.ix, ], ignore.strand=T))
-    
+
     data <- as.data.frame(data.gr[cpgs.ix, ]) %>% distinct()
     N.Sig <- sum(abs(data$y) > -log10(ALPHA))
-    
+
     p <- data  %>%
       ggplot(aes(x = start, y = abs(y), color = color)) +
-      geom_point(size = POINT.SZ, alpha = 0.8) +
+      geom_point(size = POINT.SZ, alpha = POINT.ALPHA) +
       scale_y_continuous(breaks = c(0, 50, 100, 150, 200), lim = c(0, 250)) +
       geom_hline(yintercept = 0, color = "black", alpha = 0.5) +
       geom_hline(yintercept = -log10(ALPHA), color = "black", alpha = 0.8) +
@@ -268,14 +269,14 @@ plot_points <- function(gene, data.gr, ensdb.genes){
         axis.text.x = element_blank(),
         axis.ticks = element_blank()
       )
-    
+
     return(p)
 }
 
 
 add_DMR <- function(p, left, right, pad=5000){
   # pad DMR (some are 10s of bases) to make it stand out
-    p.ann <- p + annotate("rect", fill = "orange", 
+    p.ann <- p + annotate("rect", fill = "orange",
             xmin = left - pad, xmax = right + pad,
             ymin = -Inf, ymax = Inf,
             alpha = 0.3
@@ -301,26 +302,26 @@ make_figure <- function(gene, data.gr, dmrs.df, ensdb.genes, ensdb, xlab=T, ylab
 
   # padding for DMR
   my.pad <- floor(diff(bounds) * 0.005)
-  
+
   print("Building gene model")
-  p1 <- plot_gene_model(gene, ensdb.genes, ensdb) + 
-    xlim(bounds) + 
+  p1 <- plot_gene_model(gene, ensdb.genes, ensdb) +
+    xlim(bounds) +
     theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-  
+
   print("Plotting lFDRs")
-  p2 <- plot_points(gene, data.gr, ensdb.genes) + 
+  p2 <- plot_points(gene, data.gr, ensdb.genes) +
     xlim(bounds)  +
     theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-  
+
   # Conditoinal labels
   if (!ylab){p2 <- p2 + ylab("")}
   if (!legend){p2 <- p2 + theme(legend.position = "none")}
-  
+
   print("Plotting differences")
-  p3 <- plot_diffs(gene, data.gr, ensdb.genes) + 
+  p3 <- plot_diffs(gene, data.gr, ensdb.genes) +
     xlim(bounds) +
     theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-  
+
   if (!xlab){p3 <- p3 + xlab("")}
   if (!ylab){p3 <- p3 + ylab("")}
 

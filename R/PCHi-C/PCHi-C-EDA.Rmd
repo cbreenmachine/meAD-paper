@@ -1,0 +1,75 @@
+---
+title: "Explore DMRs"
+author: "Coleman Breen"
+date: "2023-01-25"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(goplot)
+
+pchic.df <- read_csv('../../DataDerived/DMRegions-PCHi-C-result.csv', show=F) 
+with.overlap <- unique(pchic.df$DMR.id)
+
+df <- read_csv("../../DataRaw/2023-01-24-Summaries-v4/DMRegions-pis.bed", show=F) %>%
+  dplyr::mutate(DMR.id = paste0(chr.dmr, ":", start.dmr, "-", end.dmr)) %>% 
+  dplyr::filter(DMR.id %in% pchic.df$DMR.id)
+
+ss.df <- read_csv("../../DataRaw/masterSamplesheet.csv", show=F) %>%
+  dplyr::filter(sample_id %in% names(df)) %>%
+  mutate(sample_id = as.character(sample_id))
+
+load.samples <- ss.df$sample_id[ss.df$diagnostic_group == "LOAD"]
+control.samples <- ss.df$sample_id[ss.df$diagnostic_group == "CONTROL"]
+```
+
+```{r}
+length(unique(pchic.df$DMR.id))
+length(unique(df$DMR.id))
+```
+
+# Summarize DMRs
+
+```{r}
+pchic.df <- pchic.df %>% 
+  dplyr::mutate(dmr.center = (dmr.start + dmr.end) / 2,
+                oe.center = (bait.start + bait.end) / 2) %>% 
+  dplyr::mutate(interaction.dist = oe.center - dmr.center)
+
+
+pchic.df %>% 
+  dplyr::select(DMR.id, bait.id, linked.gene, interaction.dist) %>% 
+  arrange(DMR.id)
+```
+
+# Any of these genes in the Japanse cohort?
+
+```{r}
+de.df <- readxl::read_xlsx("../../DataReference/DEGenes/2020-Shigemizu-AD-RNAseq-DEGenes.xlsx", skip = 1)
+
+# What are the genes we identify in PCHi-C?
+gene.names <- unique(sort(unlist(stringr::str_split(pchic.df$linked.gene, ";"))))
+
+ix <- (gene.names %in% de.df$`gene name`)
+gene.names[ix]
+```
+
+
+
+# Notes from 01/27/23
+
+DMR calling on 2, 3, 4, 5. Want to make sure we're losing a ton of DMRs going from say 3 to 4 or 4 to 5. Sensitivity analysis.
+
+Coverage on a given CpG, summary of Coverage stats. Mean, median. 
+
+Scree plots for PCs.
+
+Sweeping over percent most variable vs. PCs. percent explained. 1, 5, 10, 25, 50, 100
+
+# Export for WashU
+
+```{r}
+
+```
+

@@ -44,6 +44,17 @@ genes <- genes(TxDb.Hsapiens.UCSC.hg38.knownGene,
                single.strand.genes.only = FALSE,
                columns = "gene_id")
 
+
+my.promoters <- promoters(TxDb.Hsapiens.UCSC.hg38.knownGene)
+length(my.promoters)
+
+
+N.DMPs.in.promoters <- length(subsetByOverlaps(dmps.gr, my.promoters))
+N.CpGs.in.promoters <- length(subsetByOverlaps(makeGRangesFromDataFrame(data), my.promoters))
+
+N.DMPs.in.promoters / N.CpGs.in.promoters
+length(dmps.gr) / nrow(data)
+
 # Introns and exons too
 introns <- unlist(intronsByTranscript(TxDb.Hsapiens.UCSC.hg38.knownGene))
 exons <- unlist(exonsBy(TxDb.Hsapiens.UCSC.hg38.knownGene))

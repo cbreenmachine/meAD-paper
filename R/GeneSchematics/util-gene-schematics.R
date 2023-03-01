@@ -250,7 +250,7 @@ plot_points <- function(gene, data.gr, ensdb.genes){
     p <- data  %>%
       ggplot(aes(x = start, y = abs(y), color = color)) +
       geom_point(size = POINT.SZ, alpha = POINT.ALPHA) +
-      scale_y_continuous(breaks = c(0, 50, 100, 150, 200), lim = c(0, 250)) +
+      scale_y_continuous(breaks = c(0, 10, 20, 30, 40, 50), lim = c(0, 50)) +
       geom_hline(yintercept = 0, color = "black", alpha = 0.5) +
       geom_hline(yintercept = -log10(ALPHA), color = "black", alpha = 0.8) +
       xlab("") +

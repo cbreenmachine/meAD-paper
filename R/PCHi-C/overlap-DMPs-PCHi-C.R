@@ -1,20 +1,29 @@
 # Results
 # List of genes
 # And how the DMR behaves?
-library(data.table)
-library(tidyverse)
-library(GenomicRanges)
-library(rtracklayer)
-library(liftOver)
-library(ggbump)
-library(org.Hs.eg.db)
-library(goplot)
-library(tibble)
-library(tidygraph)
-library(kableExtra)
-library(pheatmap)
 
-# If the mechanism
+suppressPackageStartupMessages({
+  library(data.table)
+  library(tidyverse)
+  library(GenomicRanges)
+  library(rtracklayer)
+  library(liftOver)
+  library(ggbump)
+  library(org.Hs.eg.db)
+  library(goplot)
+  library(tibble)
+  library(tidygraph)
+  library(kableExtra)
+  library(pheatmap)
+  library(ggsci)
+  library(ggraph)
+  library(igraph)
+})
+
+
+# Notes from 2/21/23
+# When min.chicago > 5; we get the result in meAD-paper
+# But this is very stringent.
 
 ALPHA <- 0.05
 
@@ -69,10 +78,49 @@ expression.df <- readxl::read_xlsx(DE.PATH, skip = 1) %>%
 promcap.raw <- fread("../../DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")
 promcap <- promcap.raw %>%
   dplyr::select(-base::setdiff(cell.types, sub.cell.types)) %>%
-  dplyr::mutate(min.chicago = pmin(!!!rlang::syms(sub.cell.types))) %>%
-  dplyr::filter(min.chicago > 5) %>%
   dplyr::mutate(bait.id = paste0("chr", baitChr,":", baitStart, "-", baitEnd),
-                oe.id = paste0("chr", oeChr,":", oeStart, "-", oeEnd))
+                oe.id = paste0("chr", oeChr,":", oeStart, "-", oeEnd),
+                ) %>%
+  rowwise() %>%
+  dplyr::mutate(min.chicago = pmin(!!!rlang::syms(sub.cell.types)),
+                med.chicago = median(!!!rlang::syms(sub.cell.types)))
+
+# For a given link (row), what percentage are signficant?
+X <- dplyr::select(promcap, all_of(sub.cell.types))
+promcap$percent.sig <- rowSums(X >= 5) / ncol(X)
+
+promcap.filtered <- promcap %>%
+  dplyr::filter(percent.sig >= 1)
+
+# Don't map baits (genic loci),
+# instead map the "other ends", which are likely enhancers
+promcap.gr <- makeGRangesFromDataFrame(promcap.filtered,
+                                       seqnames.field = "oeChr",
+                                       start.field = "oeStart",
+                                       end.field = "oeEnd",
+                                       keep.extra.columns = T)
+
+# Rename to chr1 format
+seqlevelsStyle(promcap.gr) <- "UCSC"
+
+
+# Plot significant cell types ---------------------------------------------
+tmp <- data.frame(p.sig = colSums(promcap[ ,sub.cell.types] >= 5) / nrow(promcap)) %>%
+  rownames_to_column("cell.type")
+
+tmp$cell.type <- factor(tmp$cell.type, levels = tmp$cell.type[order(tmp$p.sig, decreasing = T)])
+
+z <- tmp %>%
+  ggplot(aes(x = cell.type, y = p.sig, fill = p.sig)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  theme(legend.position = 'none',
+        plot.background = element_rect(fill = "white", color = "white")) +
+  xlab("Cell type") +
+  ylab("Percent significant") +
+  ggtitle("Percent of interactions considered significant by cell type")
+
+cowplot::save_plot(file.path(FIG.DIR, "barchart-percent-sig-by-celltype.png"), z)
 
 
 # Read and clean DMPs -----------------------------------------------------
@@ -83,20 +131,8 @@ pvals.gr <- pvals.df %>%
   makeGRangesFromDataFrame(starts.in.df.are.0based = T,
                            keep.extra.columns = T)
 
-
 chain <- import.chain(REF.CHAIN.PATH)
 pvals.lifted.gr <- unlist(liftOver(pvals.gr, chain))
-
-# Don't map baits (genic loci),
-# instead map the "other ends", which are likely enhancers
-promcap.gr <- makeGRangesFromDataFrame(promcap,
-                                       seqnames.field = "oeChr",
-                                       start.field = "oeStart",
-                                       end.field = "oeEnd",
-                                       keep.extra.columns = T)
-
-# Rename to chr1 format
-seqlevelsStyle(promcap.gr) <- "UCSC"
 
 
 # Functions ------------------------------------------------------------
@@ -144,12 +180,6 @@ get_unique_genes_from_overlaps <- function(result, filter = F){
 }
 
 
-# no.filter <- get_unique_genes_from_overlaps(result)
-# yes.filter <- get_unique_genes_from_overlaps(result, filter = T)
-#
-# length(no.filter)
-# length(yes.filter)
-
 # Non-parameteric test ----------------------------------------------------
 
 # Two tests going on here
@@ -159,12 +189,16 @@ get_unique_genes_from_overlaps <- function(result, filter = F){
 # We'll sample N.dmps number of CpGs
 N.dmps <- sum(pvals.df$lfdr.from.ss < ALPHA)
 
+# How many possible genes?
+dummy <- find_and_curate_overlaps(promcap.gr[, -1:-25], promcap.gr)
+all.possible.genes <- get_unique_genes_from_overlaps(dummy)
+
 G <- nrow(pvals.df) # number of CpGs (used for index)
-B <- 10000 # number of simulations
+B <- 100 # number of simulations
 
 # Where we'll store the randomly generated values
-N.uniq.genes <- rep(NA, B)
-N.enhancer.dmps <- rep(NA, B)
+P.uniq.genes <- rep(NA, B)
+P.enhancer.dmps <- rep(NA, B)
 
 set.seed(919)
 for (b in 1:B){
@@ -179,27 +213,30 @@ for (b in 1:B){
   rr <- find_and_curate_overlaps(dmps.sim, promcap.gr)
 
   overlapped.genes <- get_unique_genes_from_overlaps(rr, filter = T)
-  N.uniq.genes[b] <- length(overlapped.genes)
-  N.enhancer.dmps[b] <- nrow(rr)
+  P.uniq.genes[b] <- length(overlapped.genes) / length(all.possible.genes)
+  P.enhancer.dmps[b] <- nrow(rr) / length(promcap.gr)
 }
 
 # Test statistic
 result <- find_and_curate_overlaps(pvals.lifted.gr[pvals.lifted.gr$lfdr.from.ss < ALPHA],
                                    promcap.gr)
+
 T.uniq.genes <- length(get_unique_genes_from_overlaps(result, filter = T))
 T.enhancer.dmps <- nrow(result)
 
-p.uniq.genes <- 1 - (sum(T.uniq.genes <= N.uniq.genes) / B)
-p.enhancer.dmps <- 1 - (sum(T.enhancer.dmps >= N.enhancer.dmps) / B)
+p.uniq.genes <- 1 - (sum(T.uniq.genes / length(all.possible.genes) <= P.uniq.genes) / B)
+p.enhancer.dmps <- 1 - (sum(T.enhancer.dmps / length(promcap.gr) >= P.enhancer.dmps) / B)
 
 
 # Plot the result with p-values -------------------------------------------
 sim.df <- data.frame(
-  Number = c(N.uniq.genes, N.enhancer.dmps),
+  Number = c(P.uniq.genes ,
+             P.enhancer.dmps),
   Feature = c(rep("Unique genes", B), rep("DMPs in enhancer", B))
   )
 
-teststat.df <- data.frame(Observed = c(T.uniq.genes, T.enhancer.dmps),
+teststat.df <- data.frame(Observed = c(T.uniq.genes / length(all.possible.genes),
+                                       T.enhancer.dmps/ length(promcap.gr)),
                           Feature = c("Unique genes", "DMPs in enhancer"))
 
 
@@ -214,7 +251,7 @@ enhancers are in close proximity to promoter.)"
 z <- sim.df %>%
   ggplot(aes(x = Number, y = after_stat(..density..))) +
   geom_histogram(bins = 50, color = "black", fill="darkgrey") +
-  facet_wrap(.~Feature) +
+  facet_wrap(.~Feature, scales = "free") +
   geom_vline(data = teststat.df,
              aes(xintercept = Observed),
              color = "red") +
@@ -224,10 +261,11 @@ z <- sim.df %>%
   # labs(caption = cap) +
   theme(legend.position = "none",
         plot.caption = element_text(hjust = 0),
-        plot.background = element_rect(fill = "white"))
+        plot.background = element_rect(fill = "white", color = "white"))
+z
 
-cowplot::save_plot(filename = file.path(FIG.DIR, "enrichment-test-histograms.png"),
-                   z, base_width = 7)
+# cowplot::save_plot(filename = file.path(FIG.DIR, "enrichment-test-histograms.png"),
+#                    z, base_width = 7)
 
 
 # Integrate with Differential Expression ----------------------------------
@@ -297,6 +335,60 @@ p
 cowplot::save_plot(filename = file.path(FIG.DIR, "rank-bump-plot.png"),
                    p, base_width = 4.5, base_height = 7)
 
+
+ofile <- file.path(FIG.DIR, "genes-DMEnhancers-and-DiffExpression.csv")
+write_csv(ex.vs.meth.df, ofile)
+
+# WashU -------------------------------------------------------------------
+
+# result %>%
+#   dplyr::filter(seqnames == "chr14") %>%
+#   dplyr::filter(linked.gene %in% ex.vs.meth.df$gene.name)
+
+format_for_washu <- function(rr){
+  N <- nrow(rr) * 2
+
+  output <- data.frame(matrix(NA, nrow = N, ncol = 4))
+
+  for (i in seq(1, N, by=2)){
+    output[i, ] <- rr[i, c("bait.chr", "start", "end", "bait.id")]
+  }
+
+  for (i in seq(2, N, by=2)){
+    bb <- paste0(rr[i-1, "seqnames"], ":", rr[i-1, "start"], "-", rr[i-1, "end"] )
+    output[i, ] <- c(rr[i-1, c("bait.chr", "oe.start", "oe.end")], bb)
+  }
+  output
+}
+
+washu.output <- format_for_washu(result) %>% dplyr::mutate(X4 = paste0(X4, ";55"))
+washu.output %>%
+  drop_na() %>%
+  fwrite(sep = "\t", file = "washu.txt", col.names = F)
+
+# Hive plot ---------------------------------------------------------------
+
+result.2$node.DM <- paste0("(DM) ", result.2$gene.name)
+expression.df$node.DE <- paste0("(DE) ", expression.df$gene.name)
+
+xx <- sort(unique(result.2$node.DM))
+yy <- sort(unique(expression.df$node.DE))
+
+nodes <- data.frame(name = c(xx, yy),
+                    type = c(rep("Methy", length(xx)), rep("Expr", length(yy))))
+
+connections <- result.2 %>%
+  inner_join(expression.df, by = "gene.name") %>%
+  dplyr::select(starts_with("node"))
+names(connections) <- c("from", "to")
+
+gene.graph <- graph_from_data_frame(connections, vertices = nodes)
+
+
+gene.graph %>%
+  ggraph('hive', axis = type, sort.by = degree) +
+  geom_edge_hive() +
+  geom_axis_hive()
 
 # Gene ontology for DMP linked genes --------------------------------------
 

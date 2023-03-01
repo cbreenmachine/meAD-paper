@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
 source("util-gene-schematics.R")
 source("util-ensdb.R")
 
-DIR <- "../../DataRaw/2023-01-24-Summaries-v4/"
+DIR <- "../../DataRaw/2023-02-14-Summaries-v6//"
 
 IFILE <- file.path(DIR, "pvals.bed")
 DMRS.PATH <- file.path(DIR, "DMRegions.bed")
@@ -29,7 +29,7 @@ dmrs.df <- fread(DMRS.PATH) %>%
 ######### Data munging #############
 ####################################
 
-df$y <- -log10(df$lfdr)
+df$y <- -log10(df$lfdr.from.ss)
 
 sig_levels <- c("Not significant", "Significant (hyper)", "Significant (hypo)")
 my_pal <- c("grey", C.HYPER, C.HYPO)
@@ -80,7 +80,7 @@ PANEL.HEIGHT <- 7
 gene.lists <- list(
   "paper" = c("HLA-DQA1", "HLA-DRB1", "MAPT", "UMAD1"),
   "ryrs" = c("RYR1", "RYR2", "RYR3", "MAPT"),
-  "canonical" = c("APP", "APOE", "PSEN1", "PSEN2")
+  "canonical" = c("APOE", "APP", "PSEN1", "PSEN2")
 )
 
 

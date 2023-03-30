@@ -1,0 +1,300 @@
+---
+title: "Explore DM Genes"
+author: "Coleman Breen"
+date: "2023-03-01"
+output: html_document
+---
+
+
+## Summary
+
+1. At lFDR of 0.01, there are 2808 genes that are DM
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, show = F)
+
+library(tidyverse)
+library(goplot)
+library(fdrtool)
+library(viridis)
+library(EnsDb.Hsapiens.v86)
+library(imager)
+
+ensdb <- genes(EnsDb.Hsapiens.v86) %>% 
+  as.data.frame()
+```
+
+
+```{r include=FALSE}
+load("../../DataDerived/DMGenes-FishersP.RData")
+
+# For numerical reasons, there are a few entries (<10) with invalid p-values,
+# filter those out
+df <- do.call(rbind, combp.result) %>%  
+  drop_na() %>% 
+  dplyr::filter(harmonic.mean.p >= 0 & harmonic.mean.p  <=1)
+
+# FDR Computation
+fdr.out <- fdrtool(df$harmonic.mean.p, statistic = "pvalue", plot = F)
+df$lfdr <- fdr.out$lfdr
+
+
+df.2 <- left_join(df, ensdb, by = c("gene.id"="gene_id"))
+
+output <- df.2 %>% 
+  dplyr::filter(lfdr < 0.05)
+# write_csv(output, "../../DataExport/2023-03-01-DMGenes-forReid.csv")
+
+```
+
+
+# Basic Questions and Summaries
+
+How many genes tested (one or more CpGs)? About 19,000
+
+```{r}
+nrow(df.2)
+```
+
+## Calibration of Harmonic Mean P-values
+
+It's not perfect, but much better than Fisher's method.
+
+```{r}
+
+ofile <- "../../Figs/DM-associated-genes/hist-hmpval-calibration.png"
+
+png(ofile, 
+    width     = 4.25,
+    height    = 3.25,
+    units     = "in",
+    res       = 1200,
+    pointsize = 4
+)
+
+par(mfrow = c(1, 2))
+
+hist(df$fishers.p, 
+     density=T, 
+     breaks = 25, 
+     col = "black",
+     main = "Fisher's P",
+     xlab = "Aggregated P-value")
+
+hist(df$harmonic.mean.p, 
+     density=T, 
+     breaks = 25, 
+     col = "black",
+     main = "Harmonic Mean P",
+     xlab = "Aggregated P-value")
+
+dev.off()
+
+plot(load.image(ofile), axes=F)
+
+```
+
+# How many significant genes based on Bonferroni and FDR?
+
+
+## Bonferroni 
+
+First, let's look at Bonferroni.
+
+```{r}
+bonf.05 <- 0.05 / nrow(df)
+bonf.01 <- 0.01  / nrow(df)
+
+sum(df$harmonic.mean.p < bonf.05)
+sum(df$harmonic.mean.p < bonf.01)
+```
+
+Bonferroni correction at level 0.05 and 0.01 give 593 and 453 significant genes respectively.
+
+## FDR
+
+There are ~7,600 and 2,800 significant at lFDR of 0.05 and 0.01.
+
+```{r}
+sum(df$lfdr < 0.05)
+sum(df$lfdr < 0.01)
+```
+
+## Is there any realtionship between gene length and lFDR?
+
+This could occur if Harmonic P-value is not sufficiently accounting for dependency structure.
+
+```{r}
+df.2 %>% 
+  dplyr::mutate(width = end - start + 1,
+                Significance = ifelse(lfdr < 0.01, "Significant\n(lFDR < 0.01)", 
+                                      "Not significant\n(lFDR >= 0.01)")) %>% 
+  ggplot(aes(x = log(width), y = log(k), fill = after_stat(log(density)))) +
+  geom_hex() +  
+  theme_minimal() +
+  facet_wrap(.~Significance) +
+  scale_fill_viridis(option="magma") +
+  xlab("log(Gene length (nt))") +
+  ylab("log(Number of CpGs)")
+
+  
+```
+ There could be a small difference between the non-significant and significant distributions of gene length (x-axis) or number of CpGs (y-axis).
+ 
+```{r}
+df.2 %>% 
+  dplyr::mutate(width = end - start + 1,
+                Significance = ifelse(lfdr < 0.01, "Significant\n(lFDR < 0.01)", 
+                                      "Not significant\n(lFDR >= 0.01)")) %>% 
+  ggplot(aes(x = log(k), color = Significance)) +
+  stat_ecdf(geom = "step") +
+  theme_minimal() +
+  ggtitle("Empirical CDFs") +
+  xlab("log(Gene length (nt))") +
+  ylab("P[y <= y]")
+```
+
+There are relatively more short genes in the not significant group--this could be biological, but could be artefactual of harmonic p-value combination method.
+
+# Gene Ontology for LFDR 0.01
+
+What are the gene ontologies here?
+
+```{r}
+gene.ids <- df.2$gene.id[df$lfdr < 0.01]
+go.out <- goplot::run_gene_ontology(gene.ids)
+```
+
+Map the gene ids to gene symbols
+
+```{r}
+go.out.df <- goplot::go_output_to_df(go.out)
+
+
+id_to_symbol <- function(zz){
+  # Input: vector of geneID (looks like ENSS0000111/ENS000001212/...)
+  # Output: Converted to symbols and delimited by ;
+  
+ tmp <- unlist(str_split(zz, "/"))
+ symbols <- sort(df.2[(df.2$gene.id %in% tmp), "gene.name"])
+ paste(symbols, collapse = ";")
+}
+
+zz <- go.out.df$geneID[1]
+id_to_symbol(zz)
+
+go.out.df$gene.symbols <- unlist(lapply(go.out.df$geneID, id_to_symbol))
+
+# Write to data frame
+go.out.df %>% 
+  dplyr::select(ONTOLOGY, ID, Description, gene.symbols) %>% 
+  write_csv("../../Figs/DM-associated-genes/dmgenes-gene-ont-data.csv")
+```
+
+
+
+```{r}
+
+ofile <- "../../Figs/DM-associated-genes/dmgenes-gene-ont.png"
+
+z <- go.out.df %>% 
+  goplot::plot_go_barchart() +
+  geom_hline(yintercept = -log10(0.05))
+
+cowplot::save_plot(ofile, z, base_height = 8, base_width = 12)
+
+plot(load.image(ofile), axes = F)
+```
+
+
+# Do these overlap with GWAS?
+
+See [this paper](https://doi.org/10.1038/s41588-022-01024-z) for a list of GWAS genes. 
+
+```{r}
+de.df <- readxl::read_xlsx("../../DataReference/DEGenes/2020-Shigemizu-AD-RNAseq-DEGenes.xlsx", skip = 1)
+gwas <- read.table("../../DataReference/NatureGenetics042022_AD_genes.txt")$V1
+```
+
+```{r}
+test_ind_from_sets <- function(set.1, set.2, N.universe){
+  # Given two sets (i.e. lists of genes),
+  # and N.universe (i.e. number of total genes)
+  # test whether inclusion/exclusion in two sets are independent
+  
+  A <- matrix(NA, nrow=2, ncol=2)
+  
+  #           Set 1
+  #        | No | Yes | 
+  # S2 No  |    |     |
+  # S2 Yes |    |     |
+  
+  
+  A[2, 2] <- length(intersect(set.1, set.2))
+  
+  # number in set 1 (s1 yes)
+  A[1, 2] <- length(setdiff(set.1, set.2)) 
+  
+  # number in set 2 but not set 1 (s1 no, s2 yes)
+  A[2, 1] <- length(setdiff(set.2, set.1)) 
+  
+  A[1, 1] <- N.universe - A[1,2] - A[2,1] - A[2,2]
+  
+  
+  colnames(A) <- c("No.Set1", "Yes.Set1")
+  rownames(A) <- c("No.Set2", "Yes.Set2")
+  return(as.table(A))
+}
+
+
+```
+
+## Overlaps with GWAS genes
+
+```{r}
+
+DM.df <- df.2 %>% 
+  dplyr::filter(lfdr < 0.01)
+```
+
+
+```{r}
+tb <- test_ind_from_sets(gwas, DM.df$gene.name, nrow(df.2))
+tb
+chisq.test(tb, correct = F)
+
+```
+
+There are 17 genes that are in both lists.
+
+```{r}
+sort(intersect(DM.df$gene.name, gwas))
+```
+
+
+
+Which are the genes with the smallest p-value? These will probably be better for plotting.
+
+
+```{r}
+df.2 %>% 
+  arrange(log10(harmonic.mean.p)) %>% 
+  dplyr::select(harmonic.mean.p, k, gene.name) %>% 
+  head(20)
+```
+
+# Differential Expression (Not fleshed out)
+
+```{r}
+DE.genes <- de.df$`gene name`
+
+tb <- test_ind_from_sets(DM.df$gene.name, DE.genes, nrow(df.2))
+tb
+chisq.test(tb, correct = F)
+```
+There are 95 genes that are both DM and DE.
+
+
+# Citations
+
+Bellenguez, C., Küçükali, F., Jansen, I.E. et al. New insights into the genetic etiology of Alzheimer’s disease and related dementias. Nat Genet 54, 412–436 (2022). [https://doi.org/10.1038/s41588-022-01024-z]([https://doi.org/10.1038/s41588-022-01024-z])

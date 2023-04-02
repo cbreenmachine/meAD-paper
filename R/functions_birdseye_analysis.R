@@ -13,7 +13,7 @@ GENIC.MAPPING <-
 
 CPG.MAPPING <-
   data.frame(
-    Annotation = c("inter", "islands", "shelves", "shores", "Other"),
+    Annotation = c("hg38_cpg_inter", "hg38_cpg_islands", "hg38_cpg_shelves", "hg38_cpg_shores", "Other"),
     Annotation.clean = c("Open sea", "CpG island", "CpG shelf", "CpG shore", "Other")
   )
 
@@ -26,10 +26,20 @@ CPG.LEVELS <- c("Open sea", "CpG island", "CpG shelf", "CpG shore", "Other")
 # Helper functions --------------------------------------------------------
 
 
-annotate_loci_to_genic_parts <- function(data.gr){
+annotate_loci_to_genic_parts <- function(data.gr, annotate.to = 'hg38_basicgenes'){
+
+  if ("hg38_basicgenes" %in% annotate.to){
+    MAPPING <- GENIC.MAPPING
+    LEVELS <- GENIC.LEVELS
+  } else {
+    MAPPING <- CPG.MAPPING
+    LEVELS <- CPG.LEVELS
+  }
+
+  print(MAPPING)
 
   # hg38_basicgenes or hg38_cpg
-  my.anno <- annotatr::build_annotations(genome = 'hg38', annotations = 'hg38_basicgenes')
+  my.anno <- annotatr::build_annotations(genome = 'hg38', annotations = annotate.to)
 
   # Run the annotation function
   data.annotated <- annotatr::annotate_regions(data.gr, my.anno, quiet = T)
@@ -62,8 +72,8 @@ annotate_loci_to_genic_parts <- function(data.gr){
 
   # Clean some strings and put in correct order
   anno.counts.cleaned.df <- anno.counts.df %>%
-    left_join(GENIC.MAPPING, by = "Annotation") %>%
-    dplyr::mutate(Annotation.clean = factor(Annotation.clean, levels = GENIC.LEVELS)) %>%
+    left_join(MAPPING, by = "Annotation") %>%
+    dplyr::mutate(Annotation.clean = factor(Annotation.clean, levels = LEVELS)) %>%
     arrange(Annotation.clean)
 
   # Add a string that looks like 'Promoter (10 %)'
@@ -74,7 +84,10 @@ annotate_loci_to_genic_parts <- function(data.gr){
 
 
 
-# Annotation counts
-# genic.df <- annotate_regions(dmps.gr)
-# cpg.df <- annotate_regions(dmps.gr,
-#                            anno.list=c("hg38_cpg_inter", "hg38_cpg_islands", "hg38_cpg_shelves", "hg38_cpg_shores"))
+cpg_annotation_routine <- function(data.gr){
+  annotate_loci_to_genic_parts(
+    data.gr,
+    annotate.to = c("hg38_cpg_inter", "hg38_cpg_islands", "hg38_cpg_shelves", "hg38_cpg_shores")
+  )
+}
+

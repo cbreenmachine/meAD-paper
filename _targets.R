@@ -1,9 +1,14 @@
 # _targets.R
 library(targets)
+library(tarchetypes)
 
 source("R/functions.R")
 source("R/functions_birdseye_analysis.R")
 source("R/functions_birdseye_plot.R")
+
+
+# Some constants
+DATA.REFERENCE.DIR <- "./DataReference/"
 
 
 # Set target options:
@@ -29,8 +34,15 @@ tar_source()
 
 # Replace the target list below with your own:
 list(
+
+  ########## GET PUBLIC DATA ##########
+  tar_target(chain.19to38, download_chain_from_ucsc(DATA.REFERENCE.DIR, "https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz")),
+  tar_target(chain.38to19, download_chain_from_ucsc(DATA.REFERENCE.DIR, "https://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToHg19.over.chain.gz")),
+
+  ######## DEFINE CONSTANTS ###########
   tar_target(natgen.genes, get_natgen_genes("DataReference/NatureGenetics042022_AD_genes.txt")),
   tar_target(pvals.ifile, "DataRaw/2023-02-14-Summaries-v6/pvals.bed", format = "file"),
+
   # General data wrangling
   tar_target(pvals.data, get_pvals_data(pvals.ifile)),
   tar_target(pvals.gr, to_granges(pvals.data)),
@@ -83,8 +95,10 @@ list(
   tar_target(promoter.table,
              my_write_csv(dplyr::arrange(promoter.enrichment, lfdr),  "_targets/tables/promoters-dm.csv"),
              format = "file"),
+
   # Promoter analysis
-  tar_target(interactions.filters, clean_and_filter_interactions("DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt"))
+  tar_target(interactions.hg19, clean_and_filter_interactions("./DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")),
+  tar_target(interactions.hg38, lift_promoter_capture_data_to_hg38(interactions.hg19, chain.19to38, return.granges = T))
 
   # PCHi-C
   # Get remote data, etc.

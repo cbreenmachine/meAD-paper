@@ -2,6 +2,30 @@
 # Should be analysis agnostic
 
 
+download_chain_from_ucsc <- function(dir, file){
+  # Assign output name
+  ofile.name <- file.path(dir, basename(file))
+
+  # Download
+  download.file(file, destfile = ofile.name)
+
+  # Decompress
+  R.utils::gunzip(ofile.name, remove = F, overwrite = T)
+
+  # Return a chain object
+  rtracklayer::import.chain(stringr::str_remove(ofile.name, "\\.gz"))
+}
+
+
+to_ucsc_format <- function(a, b, c){
+  # Return chr1:1111-2222
+  if (!str_detect(a, "chr")){a <- paste0("chr", a)}
+  paste0(a, ":", b, "-", c)
+}
+
+to_ucsc_format_v <- Vectorize(to_ucsc_format)
+
+
 # General reading/casting functions -----------------------------------------------
 
 get_natgen_genes <- function(ifile){
@@ -95,7 +119,7 @@ get_protein_coding_promoters <- function(upstream, downstream){
 }
 
 
-make_df_from_overlapping_granges <- function(range.1, range.2){
+make_df_from_two_overlapping_granges <- function(range.1, range.2){
   # Common seqlevels
   seqlevelsStyle(range.1) <- "NCBI"
   seqlevelsStyle(range.2) <- "NCBI"
@@ -120,7 +144,7 @@ make_df_from_overlapping_granges <- function(range.1, range.2){
 # Harmonic P-value routine ------------------------------------------------
 
 harmonic_pvalue_routine <- function(loci.gr, features.gr){
-  df <- make_df_from_overlapping_granges(loci.gr, features.gr)
+  df <- make_df_from_two_overlapping_granges(loci.gr, features.gr)
 
   hmp.df <- df %>%
     group_by(gene_name) %>%
@@ -157,5 +181,86 @@ filter_by_natgen<- function(data, genes){
 # PCHi-C Data Wrangling ---------------------------------------------------
 
 clean_and_filter_interactions <- function(file){
+  # Read as text file
+  promoter_capture.data <- fread(file)
 
+  # Filter out the following:
+  # 1) oeName == "." indicates a bait-to-bait interaction
+  # 2) baitName == NA indicates unknown promoter
+  # 3) dist == NA indicates trans-chromosomal interaction
+  # 4) Sex chromosomes (don't include for now)
+  promoter_capture.filtered <- promoter_capture.data %>%
+    dplyr::filter(oeName == ".",
+                  !is.na(baitName),
+                  !is.na(dist),
+                  !(baitChr %in% c("X", "Y"))) %>%
+    # Add identifiers for each bait and other end
+    dplyr::mutate(bait.id = to_ucsc_format_v(baitChr, baitStart, baitEnd),
+                  oe.id = to_ucsc_format_v(oeChr, oeStart, oeEnd)) %>%
+    # Drop unneeded columns
+    dplyr::select(-c(clusterID, clusterPostProb, oeName, oeID))
+
+    # Get some summary statistics
+    promoter_capture.filtered$min.chicago <- apply(X=promoter_capture.filtered[, 10:26], MARGIN=1, FUN=min)
+    promoter_capture.filtered$med.chicago <- apply(X=promoter_capture.filtered[, 10:26], MARGIN=1, FUN=median)
+    promoter_capture.filtered$mean.chicago <- apply(X=promoter_capture.filtered[, 10:26], MARGIN=1, FUN=mean)
+    promoter_capture.filtered$max.chicago <- apply(X=promoter_capture.filtered[, 10:26], MARGIN=1, FUN=max)
+
+    # Return this big fella
+    promoter_capture.filtered
+}
+
+make_granges_with_common_field_prefix <- function(gr, prefix=""){
+  makeGRangesFromDataFrame(gr,
+                           seqnames.field =  paste0(prefix, "Chr"),
+                           start.field = paste0(prefix, "Start"),
+                           end.field = paste0(prefix, "End"),
+                           keep.extra.columns = T)
+}
+
+liftover_wrapper <- function(gr, chain){
+  seqlevelsStyle(gr) <- "UCSC"
+
+  unlist(rtracklayer::liftOver(gr, chain)) %>%
+    as.data.frame()
+}
+
+drop_granges_columns <- function(data){
+  dplyr::select(data, -c(seqnames, start, end, width, strand))
+}
+
+
+lift_promoter_capture_data_to_hg38 <- function(interactions.hg19, chain, return.granges=F){
+  # Need an id to re-combine later
+  interactions.hg19$interaction.id <- 1:nrow(interactions.hg19)
+
+  #TODO: how to reconcile differences here??
+  baits.hg19 <- make_granges_with_common_field_prefix(interactions.hg19, prefix="bait")
+
+  # Convert to UCSC style and liftOver
+  baits.hg38 <-liftover_wrapper(baits.hg19, chain) %>%
+    drop_granges_columns() %>%
+    distinct()
+
+  # Other ends
+  other_ends.hg19 <- make_granges_with_common_field_prefix(interactions.hg19, prefix="oe")
+
+  # Convert to UCSC style and liftOver
+  other_ends.hg38 <- liftover_wrapper(other_ends.hg19, chain) %>%
+    drop_granges_columns() %>%
+    dplyr::select(c("interaction.id", "baitChr", "baitStart", "baitEnd")) %>%
+    distinct()
+
+  # Merge
+  output <- dplyr::inner_join(baits.hg38, other_ends.hg38, by = "interaction.id")
+
+  if (nrow(output) == length(unique(output$interaction.id))){
+    if (return.granges){
+      return(make_granges_with_common_field_prefix(output, prefix = "oe"))
+    } else {
+      return(output)
+    }
+  } else {
+    warning("N row of interactions is not the same as unique interactions")
+  }
 }

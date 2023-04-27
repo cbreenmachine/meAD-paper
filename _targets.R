@@ -2,9 +2,11 @@
 library(targets)
 library(tarchetypes)
 
+source("R/theme_meAD.R")
 source("R/functions.R")
-source("R/functions_birdseye_analysis.R")
-source("R/functions_birdseye_plot.R")
+source("R/functions_summarize_DMPs.R")
+source("R/functions_PCHiC.R")
+source("R/functions_for_supplement.R")
 
 #TODO: plots and saving is a little messy
 
@@ -29,7 +31,11 @@ tar_option_set(
                "TxDb.Hsapiens.UCSC.hg38.knownGene",
                "EnsDb.Hsapiens.v86",
                "ggsci",
-               "harmonicmeanp"),
+               "harmonicmeanp",
+               "fastqq",
+               "devEMF",
+               "htmlwidgets"
+  ),
   format = "rds" # default storage format
 )
 
@@ -68,29 +74,44 @@ list(
   tar_target(dmps.gr, to_granges(dmps.data)),
 
   # Bird's eye plotting
-  tar_target(volcano.plot,
+  tar_target(dmps.volcano.plot,
              cowplot::save_plot(volcano_routine(pvals.data),
-                                filename = "_targets/figs/fig2-birds-eye/dmps-volcano-scatter.png",
+                                filename = "_targets/figs/dmps-volcano-scatter.png",
                                 base_height = 6, base_width = 6),
              format="file"),
-  tar_target(pi.plot,
+  tar_target(dmps.hyper.pi.plot,
              cowplot::save_plot(dmp_pi_chart_routine(dmps.data),
-                                filename = "_targets/figs/fig2-birds-eye/dmps-hyper-hypo-pi.png",
-                                base_height = 6, base_width = 6),
+                                filename = "_targets/figs/dmps-hyper-hypo-pi-chart.png",
+                                base_height = 4, base_width = 5),
              format = "file"),
   tar_target(dmps.genic.df, annotate_loci_to_genic_parts(dmps.gr)),
   tar_target(dmps.cpg.df, cpg_annotation_routine(dmps.gr)),
-  tar_target(cpg.island.plot,
-             cowplot::save_plot(plot_cpg_barchart(dmps.cpg.df),
-                                filename = "_targets/figs/fig2-birds-eye/dmps-cpg-island-barchart.png",
-                                base_height = 3, base_width = 6),
+  tar_target(dmps.cpg.pi.plot,
+             cowplot::save_plot(plot_cpg_pi_chart(dmps.cpg.df),
+                                filename = "_targets/figs/dmps-cpg-island-pi-chart.png",
+                                base_height = 4, base_width = 5),
              format = "file"),
-  tar_target(genic.sankey.plot,
+  tar_target(dmps.genic.sankey.plot,
              screenshot_sankey(plot_sankey(dmps.genic.df, nrow(dmps.data)),
-                               "_targets/figs/fig2-birds-eye/dmps-genic-sankey.png"),
+                               "_targets/figs/dmps-genic-sankey.png"),
              format="file"),
 
 
+  # Pvalues plot
+  tar_target(pvals.before.after.plot,
+             run_and_save_pvals_plot(pvals.data, "_targets/figs/PvalsBeforeAfter.pdf"),
+             format="file"),
+
+
+  tar_target(birdseye.plot,
+             stitch_birdseye_fig(
+               dmps.volcano.plot,
+               dmps.genic.sankey.plot,
+               dmps.cpg.pi.plot,
+               dmps.hyper.pi.plot,
+               "_targets/figs/dmps-summary-panel.png"
+               )
+             ),
 
   # Promoters
   tar_target(proco.gene.bodies, get_protein_coding_gene_bodies(upstream = 3000, downstream = 200)),
@@ -98,6 +119,19 @@ list(
 
   tar_target(gene.body.enrichment, harmonic_pvalue_routine(pvals.gr, proco.gene.bodies)),
   tar_target(promoter.enrichment, harmonic_pvalue_routine(pvals.gr, proco.promoters)),
+
+  # Gene ontologiy for DM GENES
+  tar_target(DMGenes.table,
+             my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < 0.05),
+                          file = "_targets/tables/gene-ontology-DMGenes.csv"
+                          ),
+             format = "file"),
+  tar_target(DMGenes.go.df, symbols_df_to_go_df_routine(DMGenes.table)),
+
+  tar_target(DMGenes.gene.ont,
+             cowplot::save_plot(plot_go_barchart(DMGenes.go.df, n=25),
+                                filename = "_targets/figs/gene-ontology-DMGenes.png",
+                                base_height = 7, base_width = 14)),
 
   # Write some subsets
   tar_target(gene.body.natgen.table,
@@ -126,10 +160,10 @@ list(
   tar_target(interactions.with.dmp, combine_dmps_with_interactions(dmps.gr, interactions.to.test)),
   tar_target(interactions.summary, summarize_interactions_with_dmp(interactions.with.dmp)),
   tar_target(enhancer_genes.df, summarize_dm_enhancer_genes(interactions.summary)),
-  tar_target(gene_ont.dm_enhancers.plot,
-             symbols_to_go_plot(unique(enhancer_genes.df$gene.name),
-                                "_targets/figs/gene-ontology-dm-enhancers.png"),
-             format = "file"),
+  # tar_target(gene_ont.dm_enhancers.plot,
+  #            symbols_to_go_plot(unique(enhancer_genes.df$gene.name),
+  #                               "_targets/figs/gene-ontology-dm-enhancers.png"),
+  #            format = "file"),
 
   # PCHi-C Enrichment Analysis
   tar_target(test.enhancer.enrichment,

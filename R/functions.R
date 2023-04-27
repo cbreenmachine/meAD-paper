@@ -62,6 +62,7 @@ get_pvals_data <- function(ifile){
   data.table::fread(ifile, verbose = F) %>%
     dplyr::mutate(lfdr = lfdr.from.ss,
                   pval = p.from.ss,
+                  pval.Wald = p.from.DSS,
                   y = -log10(lfdr)) %>%
     dplyr::select(-c(p.from.ss, p.from.zz, p.from.DSS,
                      lfdr.from.ss, lfdr.from.zz))
@@ -163,7 +164,7 @@ get_protein_coding_gene_bodies <- function(upstream, downstream){
 
 ids_to_symbols <- function(vv){
   genes.ref <- ensembldb::genes(get_ensdb())
-  genes.ref[match(vv, genes.ref$gene_id)]$symbol
+  genes.ref[match(vv, genes.ref$gene_id )]$symbol
 }
 
 symbols_to_ids <- function(vv){
@@ -240,64 +241,6 @@ filter_by_natgen<- function(data, genes){
 
 
 
-
-# PCHi-C Analysis ---------------------------------------------------------
-
-
-unnest_interactions <- function(interactions.gr){
-  interactions.gr %>%
-    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
-    tidyr::unnest(gene.name)
-}
-
-
-combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
-  # Overlap DMPs and interactions, and return a data frame.
-  # There will be one row for each dmp by interaction (so some duplication if an)
-  make_df_from_two_overlapping_granges(dmps.gr, interactions.gr) %>%
-    group_by(interaction.id) %>%
-    dplyr::mutate(
-      median.pi.diff = median(pi.diff),
-      k.dmps = n()) %>%
-    ungroup()
-}
-
-summarize_interactions_with_dmp <- function(interactions.with.dmps) {
-  interactions.with.dmps %>%
-    dplyr::select(-c(chr, start, end, stat, pval, y, strand,
-                     diagnostic_group_coded, pi.diff, lfdr)) %>%
-    group_by(interaction.id) %>%
-    dplyr::slice(1)
-}
-
-
-summarize_dm_enhancer_genes <- function(interactions.summary){
-  interactions.summary %>%
-    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
-    unnest(gene.name) %>%
-    distinct() %>%
-    dplyr::select(gene.name, dist, bait.id, oe.id, median.pi.diff, k.dmps)
-}
-
-
-get_unique_genes_from_interactions <- function(interactions, protein_coding = F) {
-  tmp <- unnest_interactions(interactions)
-
-  out <- sort(unique(tmp$baitNameSplit))
-
-  if (protein_coding) {
-
-    genes <- genes(get_ensdb())
-    filter.symbols <- genes$gene_name[genes$gene_biotype == "protein_coding"]
-
-    out[out %in% filter.symbols]
-  } else {
-    out
-  }
-}
-
-
-
 # Gene ontology pipeline --------------------------------------------------
 
 run_gene_ontology <- function(genes){
@@ -311,7 +254,6 @@ run_gene_ontology <- function(genes){
 }
 
 go_output_to_df <- function(go.out){
-
   # Constant to define mapping from abbreviated terms to full ones used in plots
   MAPPING <- data.frame(
     ONTOLOGY = c("MF", "CC", "BP"),
@@ -325,36 +267,39 @@ go_output_to_df <- function(go.out){
 }
 
 
-plot_go_barchart <- function(go.df, n=20){
+plot_go_barchart <- function(go.df, n=25){
 
   subdata <- head(arrange(go.df, -p.adjust), n)
   subdata$Description <- factor(subdata$Description, levels = subdata$Description)
 
   ggplot(data = subdata,
          aes(x = Description,
-             y = -log10(p.adjust),
+             # y = -log10(p.adjust),
+             y = Count,
              fill = Ontology)) +
     geom_bar(stat = "identity") +
     coord_flip() +
-    theme_minimal(base_size = 20) +
+    theme_meAD() +
     xlab("") +
-    ylab(expression(-log[10](p.adjusted))) +
+    # ylab(expression(-log[10](lFDR))) +
+    ylab("Number of genes") +
     labs(legend = "") +
     theme(legend.position = "top",
           plot.background = element_rect(fill = "white", color = "white")) +
-    scale_fill_manual(values = c("red", "orange", "blue"))
+    scale_fill_manual(values = c("#B24745FF", "#DF8F44FF", "#00A1D5FF"))
+    # geom_hline(yintercept = -log10(0.05))
 }
 
-symbols_to_go_plot <- function(symbols, file){
+symbols_df_to_go_df_routine <- function(file){
 
-  ids <- symbols_to_ids(symbols)
+  # Assuming we read from file
+  df <- read_csv(file, show_col_types = F)
+  gene.ids <- symbols_to_ids(df$gene_name)
 
-  go.out <- run_gene_ontology(ids)
-  go.df <- go_output_to_df(go.out)
+  # Gene ontology and data munging
+  go.out <- run_gene_ontology(gene.ids)
+  go_output_to_df(go.out)
 
-  z <- plot_go_barchart(go.df)
-
-  cowplot::save_plot(file, z, base_width = 12, base_height = 9)
 }
 
 

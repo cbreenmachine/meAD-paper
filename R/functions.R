@@ -269,7 +269,8 @@ go_output_to_df <- function(go.out){
 
 plot_go_barchart <- function(go.df, n=25){
 
-  subdata <- head(arrange(go.df, -p.adjust), n)
+  # Get top 25 by p-value, then arrang by gene set size
+  subdata <- head(arrange(go.df, -p.adjust), n) %>% arrange(Count)
   subdata$Description <- factor(subdata$Description, levels = subdata$Description)
 
   ggplot(data = subdata,
@@ -285,9 +286,11 @@ plot_go_barchart <- function(go.df, n=25){
     ylab("Number of genes") +
     labs(legend = "") +
     theme(legend.position = "top",
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(colour = "black"),
           plot.background = element_rect(fill = "white", color = "white")) +
     scale_fill_manual(values = c("#B24745FF", "#DF8F44FF", "#00A1D5FF"))
-    # geom_hline(yintercept = -log10(0.05))
 }
 
 symbols_df_to_go_df_routine <- function(file){
@@ -300,6 +303,17 @@ symbols_df_to_go_df_routine <- function(file){
   go.out <- run_gene_ontology(gene.ids)
   go_output_to_df(go.out)
 
+}
+
+
+convert_gene_ontology_ids_to_symbols <- function(DMGenes.go.df){
+  # Return the same data frame but with gene symbols instead of gene ontologies
+  DMGenes.go.df %>%
+    mutate(gene.ids = str_split(geneID, "/")) %>%
+    unnest(gene.ids) %>%
+    mutate(gene.symbols = ids_to_symbols(gene.ids)) %>%
+    group_by(ONTOLOGY, ID, Description, GeneRatio, BgRatio, pvalue, p.adjust) %>%
+    summarize(GeneSymbols = paste(gene.symbols, collapse = ";"))
 }
 
 

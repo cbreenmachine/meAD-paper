@@ -181,7 +181,7 @@ plot_volcano <- function(data){
     drop_na() %>%
     ggplot(aes(x = pi.diff, y = y, color = color)) +
     geom_point(size = 0.3) +
-    xlab("LOAD methylation % minus NCI methylation %") +
+    xlab("AD methylation % minus no-AD methylation %") +
     ylab(expression(-log[10](lFDR))) +
     scale_x_continuous(breaks = round(seq(-0.15, 0.15, 0.05), 2), lim = c(-0.15, 0.15)) +
     scale_color_manual(values = my.pal) +
@@ -217,7 +217,7 @@ dmp_pi_chart_routine <- function(data){
 
   # Munge
   tally.df <- data %>%
-    dplyr::mutate(direction = ifelse(pi.diff < 0, "Hypo", "Hyper")) %>%
+    dplyr::mutate(direction = ifelse(pi.diff < 0, "Hypomethylation", "Hypermethylation")) %>%
     group_by(direction) %>%
     summarize(prop = round(100 * n() / N)) %>%
     arrange(-prop) %>%
@@ -233,8 +233,8 @@ dmp_pi_chart_routine <- function(data){
           legend.text=element_text(size=16),
           legend.position = "bottom",
           plot.margin = margin(t=5, r=5,b=5,l=5)) +
-    # geom_text(aes(y = ypos, label = label), color = "white", size = 9) +
-    scale_fill_manual(name=NULL, values = c(my.colors$hyper, my.colors$hypo))
+    scale_fill_manual(name=NULL, values = c(my.colors$hyper, my.colors$hypo)) +
+    guides(fill=guide_legend(ncol=1))
 
   p.pi
 }
@@ -256,31 +256,9 @@ plot_cpg_pi_chart <- function(data){
           legend.text=element_text(size=16),
           legend.position = "bottom",
           plot.margin = margin(t=5, r=5,b=5,l=5)) +
-    guides(fill=guide_legend(ncol=2, reverse = T))
+    guides(fill=guide_legend(ncol=2, reverse = F))
 
 }
-
-#
-#
-# plot_cpg_barchart <- function(data){
-#   data %>%
-#     rownames_to_column("Location") %>%
-#     dplyr::mutate(Percent = round(value)) %>%
-#     ggplot(aes(fill = Location, x = 0, y = Percent)) +
-#     geom_bar(position="stack", stat="identity") +
-#     scale_fill_manual(name = NULL, values = pal_locuszoom()(4)) +
-#     coord_flip() +
-#     theme_void() +
-#     theme(plot.background = element_rect(fill = "transparent", colour = "transparent"),
-#           panel.background = element_rect(fill = "transparent", colour = "transparent"),
-#           plot.title = element_text(hjust = 0.5, size=20),
-#           legend.text=element_text(size=16),
-#           legend.position = "top",
-#           plot.margin = margin(t=5, r=5,b=5,l=5)) +
-#     guides(fill=guide_legend(ncol=2))
-#
-# }
-
 
 
 
@@ -293,13 +271,13 @@ stitch_birdseye_fig <- function(volcano.file, sankey.file, pi.file, cpg.file, ou
   pi <- ggdraw() + draw_image(pi.file)
   cpg <- ggdraw() + draw_image(cpg.file)
 
-  topright <- plot_grid(pi, cpg, rel_widths = c(0.5, 0.5),
-                        labels = c("B", "C"))
+  topright <- plot_grid(pi, NULL, cpg, rel_widths = c(0.5, 0, 0.5),
+                        labels = c("B","", "C"), nrow = 1)
 
-  right <- plot_grid(topright, sankey,
+  right <- plot_grid(topright, NULL, sankey,
                      ncol = 1,
-                     rel_heights = c(0.5, 0.5),
-                     labels = c(NA, "D"))
+                     rel_heights = c(0.5, 0, 0.5),
+                     labels = c(NA, NA, "D"))
 
   z <- plot_grid(volcano, right,
             ncol = 2,

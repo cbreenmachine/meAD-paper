@@ -16,7 +16,6 @@ DATA.REFERENCE.DIR <- "./DataReference/"
 # lFDR Cutoff
 ALPHA.CUT <- 0.05
 
-
 # Set target options:
 tar_option_set(
   packages = c("tidyverse",
@@ -34,7 +33,8 @@ tar_option_set(
                "harmonicmeanp",
                "fastqq",
                "devEMF",
-               "htmlwidgets"
+               "htmlwidgets",
+               "rson"
   ),
   format = "rds" # default storage format
 )
@@ -64,9 +64,6 @@ list(
              ),
   tar_target(pvals.ifile, "DataRaw/2023-02-14-Summaries-v6/pvals.bed", format = "file"),
 
-  ######### GENE STUFF ################
-
-
   ######### Wrangle DMPs #############
   tar_target(pvals.data, get_pvals_data(pvals.ifile)),
   tar_target(pvals.gr, to_granges(pvals.data)),
@@ -82,14 +79,14 @@ list(
   tar_target(dmps.hyper.pi.plot,
              cowplot::save_plot(dmp_pi_chart_routine(dmps.data),
                                 filename = "_targets/figs/dmps-hyper-hypo-pi-chart.png",
-                                base_height = 4, base_width = 5),
+                                base_height = 4.5, base_width = 5.5),
              format = "file"),
   tar_target(dmps.genic.df, annotate_loci_to_genic_parts(dmps.gr)),
   tar_target(dmps.cpg.df, cpg_annotation_routine(dmps.gr)),
   tar_target(dmps.cpg.pi.plot,
              cowplot::save_plot(plot_cpg_pi_chart(dmps.cpg.df),
                                 filename = "_targets/figs/dmps-cpg-island-pi-chart.png",
-                                base_height = 4, base_width = 5),
+                                base_height = 4.5, base_width = 5.5),
              format = "file"),
   tar_target(dmps.genic.sankey.plot,
              screenshot_sankey(plot_sankey(dmps.genic.df, nrow(dmps.data)),
@@ -97,23 +94,31 @@ list(
              format="file"),
 
 
-  # Pvalues plot
+# Sequencing quality plot -------------------------------------------------
+  tar_target(coverage.plot, plot_coverage_hist_routine(
+    "./DataSummaries/2023-01-30-AllDepth.txt",
+    "./DataSummaries/2023-02-01-AverageCoverage.csv",
+    "_targets/figs/seq-depth-effective-coverage-histograms.png"
+  ), format = "file"),
   tar_target(pvals.before.after.plot,
              run_and_save_pvals_plot(pvals.data, "_targets/figs/PvalsBeforeAfter.pdf"),
              format="file"),
-
-
   tar_target(birdseye.plot,
              stitch_birdseye_fig(
                dmps.volcano.plot,
                dmps.genic.sankey.plot,
-               dmps.cpg.pi.plot,
                dmps.hyper.pi.plot,
+               dmps.cpg.pi.plot,
                "_targets/figs/dmps-summary-panel.png"
                )
              ),
 
-  # Promoters
+
+# Comparison with Nature Genetics List ------------------------------------
+
+
+
+# DM Genes (and promoters) ------------------------------------------------
   tar_target(proco.gene.bodies, get_protein_coding_gene_bodies(upstream = 3000, downstream = 200)),
   tar_target(proco.promoters, get_protein_coding_promoters(upstream = 10000, downstream = 500)),
 
@@ -153,19 +158,18 @@ list(
              my_write_csv(dplyr::arrange(promoter.enrichment, lfdr),  "_targets/tables/promoters-dm.csv"),
              format = "file"),
 
-  # Promoter Capture Hi-C analysis
+
+# PCHi-C Analysis ---------------------------------------------------------
+
   tar_target(interactions.hg19, clean_interactions_data("./DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")),
   tar_target(interactions.hg38, lift_promoter_capture_data_to_hg38(interactions.hg19, chain.19to38, return.granges = T)),
   tar_target(interactions.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
   tar_target(interactions.with.dmp, combine_dmps_with_interactions(dmps.gr, interactions.to.test)),
   tar_target(interactions.summary, summarize_interactions_with_dmp(interactions.with.dmp)),
   tar_target(enhancer_genes.df, summarize_dm_enhancer_genes(interactions.summary)),
-  # tar_target(gene_ont.dm_enhancers.plot,
-  #            symbols_to_go_plot(unique(enhancer_genes.df$gene.name),
-  #                               "_targets/figs/gene-ontology-dm-enhancers.png"),
-  #            format = "file"),
 
-  # PCHi-C Enrichment Analysis
+
+# PCHi-C Enrichment Analysis ---------------------------------------------
   tar_target(test.enhancer.enrichment,
              test_enhancer_enrichment_for_dmps(pvals.gr,
                                                dmps.gr,
@@ -176,17 +180,38 @@ list(
                                                "_targets/figs/test-enhancer-enrichment.png"),
              format = "file"),
 
+  tar_target(interactions.for.ucsc,
+             export_significant_interactions_to_UCSC(interactions.with.dmp)),
 
-
-
-  # Integrate with expression data
-
-
-  # Export UCSC data
+# Export UCSC -------------------------------------------------------------
+  tar_target(interactions.for.ucsc.bed,
+             format_and_write_interactions(
+               interactions.for.ucsc,
+               "_targets/ucsc/interactions-with-DMP.hg38.bb"),
+             format = "file"),
   tar_target(dmps.lolly,
-             format_and_write_ucsc_lolly(pvals.gr, "_targets/ucsc/DMPs.lolly.bb", ALPHA.CUT),
+             format_and_write_ucsc_lolly(pvals.gr, "_targets/ucsc/DMPs-lolly.hg38.bb", ALPHA.CUT),
+             format = "file"),
+
+
+
+# Key summary stats -------------------------------------------------------
+
+  # tar_target(dmps.stats, ),
+  tar_target(pchic.stats, get_summary_stats_pchic(interactions.to.test, interactions.with.dmp)),
+
+
+# Write out the data sets -------------------------------------------------
+
+  # 1. DMPs
+
+  # 2. Nature genetics list
+
+  # 3. Gene ontologies
+  tar_target(table.s3,
+             process_and_write_gene_ontology_terms(
+               DMGenes.go.df,
+               "_targets/tables/supplemental/S3-gene-ontologies.xlsx"),
              format = "file")
 
-  # PCHi-C
-  # Get remote data, etc.
 )

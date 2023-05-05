@@ -311,6 +311,9 @@ format_and_write_interactions <- function(interactions.for.ucsc, file){
 
 get_summary_stats_pchic <- function(interactions.to.test, interactions.with.dmp){
 
+  # N DMPs
+  N.dmps.in.enhancer <- interactions.with.dmp[, 1:3] %>% distinct() %>% nrow()
+
   # Test set
   N.interactions.tested <- length(unique(interactions.to.test$interaction.id))
   N.promoter.baits.tested <- length(unique(interactions.to.test$bait.id))
@@ -321,11 +324,49 @@ get_summary_stats_pchic <- function(interactions.to.test, interactions.with.dmp)
   N.promoter.baits.sig <- length(unique(interactions.with.dmp$bait.id))
   N.enhancer.oends.sig <- length(unique(interactions.with.dmp$oe.id))
 
-  return(list("N interactions tested" = N.interactions.tested,
+  return(list("N DMPs in at least one enhancer" = N.dmps.in.enhancer,
+              "N interactions tested" = N.interactions.tested,
               "N promoter (baits) tested" = N.promoter.baits.tested,
               "N enhancer (other ends) tested" = N.enhancer.oends.tested,
               "N interactions significant" = N.interactions.sig,
               "N promoter (baits) significant" = N.promoter.baits.sig,
               "N enhancer (other ends) significant" = N.promoter.baits.sig))
 
+}
+
+
+
+# Integrate with RNAseq ---------------------------------------------------
+
+unnest_interactions_by_gene <- function(inter){
+  inter %>%
+    as.data.frame() %>%
+    mutate(gene.name = str_split(baitName, ";")) %>%
+    unnest(gene.name)
+}
+
+
+test_ranks_of_pchic_rnaseq <- function(diff_exp.data, interactions.with.dmp){
+
+  # Need one gene per row
+  inter.unnested <- unnest_interactions_by_gene(interactions.with.dmp)
+
+  # Need one representative enhancer per gene
+  inter <- inter.unnested %>%
+    dplyr::select(gene.name, k.dmps, median.pi.diff) %>%
+    dplyr::group_by(gene.name) %>%
+    arrange(abs(median.pi.diff)) %>%
+    dplyr::slice(ceiling(n()/2)) # grab the most central
+
+  # Joined by gene.name
+  tmp <- inner_join(diff_exp.data, inter, by = "gene.name")
+
+  xx <- abs(tmp$logFC)
+  yy <- abs(tmp$median.pi.diff)
+
+  return(list(
+    "N enhancer genes" = length(unique(inter$gene.name)),
+    "N common (DE, DME) genes" = length(unique(tmp$gene.name)),
+    "Kendall's rank test p-value" = cor.test(xx, yy, method = "kendall")$p.val
+  ))
 }

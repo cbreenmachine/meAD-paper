@@ -80,15 +80,16 @@ run_and_save_pvals_plot <- function(pvals.data, file){
 
 # Coverage histograms -----------------------------------------------------
 
-munge_sequencing_depth <- function(file){
+munge_sequencing_depth <- function(file, sample.ids){
   read_csv(file,
            show_col_types = F,
            col_names = c("sample_id", "Mean sequencing depth")) %>%
-    mutate(sample_id = as.character(sample_id))
+    mutate(sample_id = as.character(sample_id)) %>%
+    dplyr::filter(sample_id %in% sample.ids)
 }
 
 
-munge_effective_coverage <- function(file){
+munge_effective_coverage <- function(file, sample.ids){
 
   df <- read_csv(file, show_col_types = F)
 
@@ -103,15 +104,13 @@ munge_effective_coverage <- function(file){
     summarize(Cov.bar = as.numeric(weight %*% value))
 
   names(cov) <-c("sample_id", "Mean effective coverage")
-  cov
+  cov %>%
+    dplyr::filter(sample_id %in% sample.ids)
 }
 
 
-plot_coverage_hist_routine <- function(depth.file, cov.file, ofile){
 
-  depth.df <- munge_sequencing_depth(depth.file)
-  cov.df <- munge_effective_coverage(cov.file)
-
+plot_coverage_hist_routine <- function(depth.df, cov.df, ofile){
   df <- full_join(cov.df, depth.df, by = "sample_id") %>%
     pivot_longer(-sample_id) %>%
     mutate(name = factor(name, levels = c("Mean sequencing depth", "Mean effective coverage")))
@@ -183,8 +182,33 @@ get_all_stats_from_dir <- function(dir){
 # Write supplementary tables ----------------------------------------------
 
 
-process_and_write_dmps <- function(){
-  return()
+process_and_write_dmps <- function(dmps.gr, file){
+  out <- dmps.gr %>%
+    as.data.frame() %>%
+    dplyr::transmute(
+                  Chromosome = seqnames,
+                  Start = start,
+                  End = end,
+                  MeanDifferenceADMinusNoAD = pi.diff,
+                  lFDR = lfdr)
+
+  writexl::write_xlsx(out, file)
+  return(file)
+}
+
+
+process_and_write_DM_genes <- function(gene.body.enrichment, natgen.genes, file){
+  gene.body.enrichment %>%
+    transmute(
+      GeneSymbol = gene_name,
+      N.CpGs,
+      N.DMPs,
+      HarmonicMeanPval,
+      lFDR = lfdr,
+      ADGenomicRiskLocus = ifelse(GeneSymbol %in% natgen.genes, "GeneticRiskLocus", ".")
+    ) %>%
+    writexl::write_xlsx(path = file)
+  return(file)
 }
 
 #

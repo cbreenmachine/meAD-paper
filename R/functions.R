@@ -8,6 +8,32 @@ BLOOD.CELL.TYPES <- c("Mon", "Mac0", "Mac1", "Mac2", "Neu", "MK", "EP", "Ery",
                       "FoeT", "nCD4", "tCD4", "aCD4", "naCD4", "nCD8", "tCD8",
                       "nB", "tB")
 
+get_sample_ids_from_dss_inputs <- function(file){
+  e <- new.env()
+  load(file, envir = e)
+  return(rownames(e$design.df))
+}
+
+
+get_apoe_allele_frequencies <- function(file, sample.ids){
+  df <- read_csv(file, show_col_types = F) %>%
+    dplyr::filter(sample_id %in% sample.ids) %>%
+    dplyr::mutate(APOE.risk.allele = ifelse(apoe_e1 == 4 | apoe_e2 == 4, 1, 0)) %>%
+    dplyr::select(diagnostic_group, sample_id, APOE.risk.allele, apoe_e1, apoe_e2) %>%
+    drop_na()
+}
+
+
+test_apoe_allele_frequencies <- function(apoe.df){
+  tb <- apoe.df %>%
+    group_by(diagnostic_group) %>%
+    summarize(N.with.e4 = sum(APOE.risk.allele),
+              N.without.e4 = n() - N.with.e4) %>%
+    column_to_rownames("diagnostic_group")
+
+  return(list("Table" = tb, "Test" = chisq.test(tb)))
+}
+
 
 download_chain_from_ucsc <- function(dir, file){
   # Assign output name
@@ -155,11 +181,23 @@ expand_genes <- function(gr, upstream, downstream) {
   return(gr)
 }
 
-get_protein_coding_gene_bodies <- function(upstream, downstream){
+get_gene_bodies <- function(upstream, downstream, autosomes_only = T, protein_coding_only = T){
   db <- get_ensdb()
   genes <- genes(db)
 
-  expand_genes(genes[genes$gene_biotype == "protein_coding"], upstream, downstream)
+  # Respective indices
+  protein.coding.ix <- genes$gene_biotype == "protein_coding"
+  autosome.ix <- as.vector(seqnames(genes) %in% 1:22)
+
+  if (autosomes_only & protein_coding_only){
+    expand_genes(genes[protein.coding.ix & autosome.ix], upstream, downstream)
+  } else if (autosomes_only & !protein_coding_only){
+    expand_genes(genes[autosome.ix], upstream, downstream)
+  } else if (!autosomes_only & protein_coding_only){
+    expand_genes(genes[protein.coding.ix], upstream, downstream)
+  } else {
+    expand_genes(genes, upstream, downstream )
+  }
 }
 
 ids_to_symbols <- function(vv){
@@ -206,20 +244,21 @@ make_df_from_two_overlapping_granges <- function(range.1, range.2){
 
 # Harmonic P-value routine ------------------------------------------------
 
-harmonic_pvalue_routine <- function(loci.gr, features.gr){
+harmonic_pvalue_routine <- function(loci.gr, features.gr, alpha){
   df <- make_df_from_two_overlapping_granges(loci.gr, features.gr)
 
   hmp.df <- df %>%
     group_by(gene_name) %>%
     dplyr::summarize(
-      k = n(),
-      hm.pval = harmonicmeanp::p.hmp(pval, L = k)
+      N.CpGs = n(),
+      N.DMPs = sum(lfdr < alpha),
+      HarmonicMeanPval = harmonicmeanp::p.hmp(pval, L = N.CpGs)
     ) %>%
-    dplyr::mutate(hm.pval = pmin(hm.pval, 1)) %>%
-    dplyr::mutate(hm.pval = pmax(hm.pval, 0))
+    dplyr::mutate(HarmonicMeanPval = pmin(HarmonicMeanPval, 1)) %>%
+    dplyr::mutate(HarmonicMeanPval = pmax(HarmonicMeanPval, 0))
 
   # FDR calculation
-  fdr.out <- fdrtool::fdrtool(x = hmp.df$hm.pval, statistic = "pvalue", plot = F)
+  fdr.out <- fdrtool::fdrtool(x = hmp.df$HarmonicMeanPval, statistic = "pvalue", plot = F)
 
   # Pack together
   hmp.df$lfdr <- fdr.out$lfdr
@@ -270,12 +309,12 @@ go_output_to_df <- function(go.out){
 plot_go_barchart <- function(go.df, n=25){
 
   # Get top 25 by p-value, then arrang by gene set size
-  subdata <- head(arrange(go.df, -p.adjust), n) %>% arrange(Count)
+  subdata <- head(dplyr::arrange(go.df, p.adjust), n) %>%
+    arrange(Count)
   subdata$Description <- factor(subdata$Description, levels = subdata$Description)
 
   ggplot(data = subdata,
          aes(x = Description,
-             # y = -log10(p.adjust),
              y = Count,
              fill = Ontology)) +
     geom_bar(stat = "identity") +
@@ -375,6 +414,18 @@ liftover_wrapper <- function(gr, chain){
 
   unlist(rtracklayer::liftOver(gr, chain)) %>%
     as.data.frame()
+}
+
+filter_by_gene_symbols <- function(genes, inclusion.genes){
+  out <- genes[genes$symbol %in% inclusion.genes]
+  out
+}
+
+
+tally_dmps_in_genes <- function(genes.with.dmp){
+  as.data.frame(genes.with.dmp) %>%
+    group_by(symbol) %>%
+    summarize(N.DMPs = n())
 }
 
 

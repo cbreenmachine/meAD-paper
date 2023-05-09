@@ -2,13 +2,7 @@
 library(targets)
 library(tarchetypes)
 
-source("R/theme_meAD.R")
-source("R/functions.R")
-source("R/functions_summarize_DMPs.R")
-source("R/functions_PCHiC.R")
-source("R/functions_for_supplement.R")
-
-#TODO: plots and saving is a little messy
+tar_source(files = "R")
 
 # Some constants
 DATA.REFERENCE.DIR <- "./DataReference/"
@@ -40,9 +34,6 @@ tar_option_set(
   format = "rds" # default storage format
 )
 
-
-# Run the R scripts in the R/ folder with your custom functions:
-tar_source()
 
 # Replace the target list below with your own:
 list(
@@ -154,7 +145,7 @@ tar_target(promoter.enrichment, harmonic_pvalue_routine(pvals.gr, promoters, ALP
 
 # Gene ontologiy for DM GENES
 tar_target(DMGenes.table,
-           my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < 0.05),
+           my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < 0.01),
                         file = "_targets/tables/gene-ontology-DMGenes.csv"
                         ),
            format = "file"),
@@ -190,7 +181,6 @@ tar_target(interactions.with.dmp, combine_dmps_with_interactions(dmps.gr, intera
 tar_target(interactions.summary, summarize_interactions_with_dmp(interactions.with.dmp)),
 tar_target(enhancer_genes.df, summarize_dm_enhancer_genes(interactions.summary)),
 
-
 tar_target(test.enhancer.enrichment,
            test_enhancer_enrichment_for_dmps(pvals.gr,
                                              dmps.gr,
@@ -207,7 +197,7 @@ tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff_exp.data, interaction
 
 # Export UCSC -------------------------------------------------------------
 tar_target(interactions.for.ucsc.bed,
-           format_and_write_interactions(
+           format_and_write_ucsc_interactions(
              interactions.for.ucsc,
              "_targets/ucsc/interactions-with-DMP.hg38.bb"),
            format = "file"),
@@ -224,27 +214,42 @@ tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/")),
 
 # Write out the data sets -------------------------------------------------
 
-# 1. DMPs
+# 1. DMPs (good)
 tar_target(table.s1.DMPs,
            process_and_write_dmps(
              dmps.gr,
              "_targets/tables/supplemental/S1-DMPs.xlsx"),
            format = "file"),
 
-# 2. All genes + Nature genetics annotation
-tar_target(table.s2.DMGenes,
-           process_and_write_DM_genes(
-             gene.body.enrichment,
+# 2. Nature genetics AD Risk Loci
+tar_target(table.s2.NatGenLoci25kb,
+           process_and_write_nature_genetics_list(
+             NG.tally.df,
              natgen.genes,
-             "_targets/tables/supplemental/S2-DMGenes.xlsx"
+             "_targets/tables/supplemental/S2-ADRiskLociNumberOfDMPs.xlsx"
            ),
            format = "file"),
 
-# 3. Gene ontologies
-tar_target(table.s3.GeneOntologies,
+# 3. All genes + Nature genetics annotation
+tar_target(table.s3.DMGenes,
+           process_and_write_DM_genes(
+             gene.body.enrichment,
+             "_targets/tables/supplemental/S3-DMGenes.xlsx"
+           ),
+           format = "file"),
+
+
+# 4. Gene ontologies
+tar_target(table.s4.GeneOntologies,
            process_and_write_gene_ontology_terms(
              DMGenes.go.df,
-             "_targets/tables/supplemental/S3-DMGenes-GeneOntologies.xlsx"),
+             "_targets/tables/supplemental/S4-DMGenes-GeneOntologies.xlsx"),
+           format = "file"),
+
+tar_target(table.s5.DMEnhancers,
+           format_and_write_interactions(
+             interactions.summary,
+             "_targets/tables/supplemental/S5-DMEnhancers.xlsx"),
            format = "file")
 
 )

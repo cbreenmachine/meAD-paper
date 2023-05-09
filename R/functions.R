@@ -310,7 +310,8 @@ plot_go_barchart <- function(go.df, n=25){
 
   # Get top 25 by p-value, then arrang by gene set size
   subdata <- head(dplyr::arrange(go.df, p.adjust), n) %>%
-    arrange(Count)
+    arrange(-p.adjust)
+    # arrange(Count)
   subdata$Description <- factor(subdata$Description, levels = subdata$Description)
 
   ggplot(data = subdata,

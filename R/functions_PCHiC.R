@@ -5,6 +5,12 @@ ucsc.order.cols <- c("chrom", "chromStart", "chromEnd",
                      "sourceChrom", "sourceStart", "sourceEnd", "sourceName", "sourceStrand",
                      "targetChrom", "targetStart", "targetEnd", "targetName", "targetStrand")
 
+unnest_interactions <- function(interactions.gr){
+  interactions.gr %>%
+    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
+    tidyr::unnest(gene.name)
+}
+
 
 clean_interactions_data <- function(file){
   # Read as text file
@@ -173,13 +179,6 @@ plot_enhancer_enrichment_for_dmps <- function(enrichment.result, file) {
 
 
 
-unnest_interactions <- function(interactions.gr){
-  interactions.gr %>%
-    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
-    tidyr::unnest(gene.name)
-}
-
-
 combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
   # Overlap DMPs and interactions, and return a data frame.
   # There will be one row for each dmp by interaction (so some duplication if an)
@@ -211,7 +210,8 @@ get_unique_genes_from_interactions <- function(interactions, protein_coding = F)
 
 summarize_interactions_with_dmp <- function(interactions.with.dmps) {
   interactions.with.dmps %>%
-    dplyr::select(-c(chr, start, end, stat, pval, y, strand,
+    # Drop DMP related stuff
+    dplyr::select(-c(chr, start, end, stat, pval, pval.Wald, y, strand,
                      diagnostic_group_coded, pi.diff, lfdr)) %>%
     group_by(interaction.id) %>%
     dplyr::slice(1)
@@ -271,7 +271,7 @@ export_significant_interactions_to_UCSC <- function(interactions.with.dmp){
 }
 
 
-format_and_write_interactions <- function(interactions.for.ucsc, file){
+format_and_write_ucsc_interactions <- function(interactions.for.ucsc, file){
 
   out <-
     interactions.for.ucsc %>%
@@ -343,6 +343,18 @@ unnest_interactions_by_gene <- function(inter){
     as.data.frame() %>%
     mutate(gene.name = str_split(baitName, ";")) %>%
     unnest(gene.name)
+}
+
+
+format_and_write_interactions <- function(interactions.summary, file){
+  unnest_interactions_by_gene(interactions.summary) %>%
+    transmute(
+      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
+      `Gene Symbol` = gene.name,
+      `Promoter Locus (hg38)` = paste0(baitChr, ":", baitStart, "-", baitEnd),
+      `Enhancer Locus (hg38)` = oe.id) %>%
+    writexl::write_xlsx(file)
+  return(file)
 }
 
 

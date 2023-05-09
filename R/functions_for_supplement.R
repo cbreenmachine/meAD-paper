@@ -187,25 +187,24 @@ process_and_write_dmps <- function(dmps.gr, file){
     as.data.frame() %>%
     dplyr::transmute(
                   Chromosome = seqnames,
-                  Start = start,
-                  End = end,
-                  MeanDifferenceADMinusNoAD = pi.diff,
-                  lFDR = lfdr)
+                  "Start Coordinate (hg38)" = start,
+                  `End Coordinate (hg38)` = end,
+                  `Estimated Methylation Difference (AD minus no-AD)` = pi.diff,
+                  `Local False-Discovery Rate (lFDR)` = lfdr)
 
-  writexl::write_xlsx(out, file)
+  writexl::write_xlsx(out, file, format_headers = T)
   return(file)
 }
 
 
-process_and_write_DM_genes <- function(gene.body.enrichment, natgen.genes, file){
+process_and_write_DM_genes <- function(gene.body.enrichment, file){
   gene.body.enrichment %>%
     transmute(
-      GeneSymbol = gene_name,
-      N.CpGs,
-      N.DMPs,
-      HarmonicMeanPval,
-      lFDR = lfdr,
-      ADGenomicRiskLocus = ifelse(GeneSymbol %in% natgen.genes, "GeneticRiskLocus", ".")
+      `Gene Symbol` = gene_name,
+      `Total Number of CpGs` = N.CpGs,
+      `Number of Differentially Methylated Positions (DMPs)` = N.DMPs,
+      `Harmonic Mean p-value` = HarmonicMeanPval,
+      `Local False-Discovery Rate (lFDR)` = lfdr,
     ) %>%
     writexl::write_xlsx(path = file)
   return(file)
@@ -214,7 +213,33 @@ process_and_write_DM_genes <- function(gene.body.enrichment, natgen.genes, file)
 #
 process_and_write_gene_ontology_terms <- function(DMGenes.go.df, file){
   # First convert ENSEMBL IDs to genes...
-  tmp <- convert_gene_ontology_ids_to_symbols(DMGenes.go.df)
+  tmp <- convert_gene_ontology_ids_to_symbols(DMGenes.go.df) %>%
+    transmute(`Gene Ontology (GO) Domain` = ONTOLOGY,
+              `GO Term ID` = ID,
+              `GO Description` = Description,
+              `Gene Symbols` = GeneSymbols,
+              `Gene Ratio` = GeneRatio,
+              `BG Ratio` = BgRatio,
+              `Local False-Discovery Rate (lFDR)` = p.adjust)
   writexl::write_xlsx(tmp, path = file)
   file
+}
+
+process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, file){
+
+  # Need to expand current dataset
+  genes.zero.dmps <- setdiff(natgen.genes, NG.tally.df$symbol)
+  tmp <- data.frame(genes.zero.dmps, 0)
+  colnames(tmp) <- colnames(NG.tally.df)
+
+  # COmbine non-zero with zero counts
+  out <- rbind(NG.tally.df, tmp) %>%
+    dplyr::filter(!str_detect(symbol, "IGH")) %>%
+    arrange(-N.DMPs)
+
+  colnames(out) <- c("AD Genomic Risk Locus Symbol", "Number Of Differentially Methylated Positions (DMPs) Within 25kb")
+
+  writexl::write_xlsx(out, path = file)
+  return(file)
+
 }

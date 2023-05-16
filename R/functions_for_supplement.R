@@ -19,16 +19,7 @@ plot_hist_from_pvals <- function(pp){
        main = as.expression(ti),
        xlab = expression(p))
 
-  # data.frame(pp) %>%
-  #   ggplot(aes(x = pp, y = after_stat(..density..))) +
-  #   geom_histogram(bins = 50, fill = "darkgrey", color = "black", linewidth=0.1) +
-  #   xlim(c(0,1)) +
-  #   ylim(c(0, 1.7)) +
-  #   xlab("P-values") +
-  #   ylab("Density") +
-  #   theme_minimal() +
-  #   labs(subtitle = ti) +
-  #   theme(plot.background = element_rect(fill = "white", color= "white"))
+
 }
 
 
@@ -182,8 +173,9 @@ get_all_stats_from_dir <- function(dir){
 # Write supplementary tables ----------------------------------------------
 
 
-process_and_write_dmps <- function(dmps.gr, file){
-  out <- dmps.gr %>%
+process_and_write_dmps <- function(dmps.gr, desc, file){
+
+  data <- dmps.gr %>%
     as.data.frame() %>%
     dplyr::transmute(
                   Chromosome = seqnames,
@@ -192,28 +184,40 @@ process_and_write_dmps <- function(dmps.gr, file){
                   `Estimated Methylation Difference (AD minus no-AD)` = pi.diff,
                   `Local False-Discovery Rate (lFDR)` = lfdr)
 
-  writexl::write_xlsx(out, file, format_headers = T)
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
   return(file)
 }
 
 
-process_and_write_DM_genes <- function(gene.body.enrichment, file){
-  gene.body.enrichment %>%
+process_and_write_DM_genes <- function(gene.body.enrichment, desc, file){
+
+
+  data <- gene.body.enrichment %>%
     transmute(
       `Gene Symbol` = gene_name,
       `Total Number of CpGs` = N.CpGs,
       `Number of Differentially Methylated Positions (DMPs)` = N.DMPs,
       `Harmonic Mean p-value` = HarmonicMeanPval,
       `Local False-Discovery Rate (lFDR)` = lfdr,
-    ) %>%
-    writexl::write_xlsx(path = file)
+    )
+
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
   return(file)
 }
 
 #
-process_and_write_gene_ontology_terms <- function(DMGenes.go.df, file){
+process_and_write_gene_ontology_terms <- function(DMGenes.go.df, desc, file){
+
   # First convert ENSEMBL IDs to genes...
-  tmp <- convert_gene_ontology_ids_to_symbols(DMGenes.go.df) %>%
+  data <- convert_gene_ontology_ids_to_symbols(DMGenes.go.df) %>%
     transmute(`Gene Ontology (GO) Domain` = ONTOLOGY,
               `GO Term ID` = ID,
               `GO Description` = Description,
@@ -221,11 +225,37 @@ process_and_write_gene_ontology_terms <- function(DMGenes.go.df, file){
               `Gene Ratio` = GeneRatio,
               `BG Ratio` = BgRatio,
               `Local False-Discovery Rate (lFDR)` = p.adjust)
-  writexl::write_xlsx(tmp, path = file)
-  file
+
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
+  return(file)
 }
 
-process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, file){
+
+format_and_write_interactions <- function(interactions.summary, desc, file){
+
+  data <- unnest_interactions_by_gene(interactions.summary) %>%
+    transmute(
+      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
+      `Gene Symbol` = gene.name,
+      `Promoter Locus (hg38)` = paste0(baitChr, ":", baitStart, "-", baitEnd),
+      `Enhancer Locus (hg38)` = oe.id)
+
+
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
+
+  return(file)
+}
+
+process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, desc,  file){
+
 
   # Need to expand current dataset
   genes.zero.dmps <- setdiff(natgen.genes, NG.tally.df$symbol)
@@ -233,13 +263,17 @@ process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, fi
   colnames(tmp) <- colnames(NG.tally.df)
 
   # COmbine non-zero with zero counts
-  out <- rbind(NG.tally.df, tmp) %>%
+  data <- rbind(NG.tally.df, tmp) %>%
     dplyr::filter(!str_detect(symbol, "IGH")) %>%
     arrange(-N.DMPs)
 
-  colnames(out) <- c("AD Genomic Risk Locus Symbol", "Number Of Differentially Methylated Positions (DMPs) Within 25kb")
+  colnames(data) <- c("AD Genomic Risk Locus Symbol", "Number Of Differentially Methylated Positions (DMPs) Within 25kb")
 
-  writexl::write_xlsx(out, path = file)
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
   return(file)
 
 }

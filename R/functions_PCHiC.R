@@ -129,7 +129,7 @@ count_unique_overlaps <- function(dmps.gr, features.gr){
 
 # Enrichment Analysis -----------------------------------------------------
 
-test_enhancer_enrichment_for_dmps <- function(null.space.gr, dmps.gr, features.gr, B=10000){
+test_enrichment_for_dmps <- function(null.space.gr, dmps.gr, features.gr, B=10000){
 
   N.simulated.dmps <- length(dmps.gr)
 
@@ -218,7 +218,24 @@ summarize_interactions_with_dmp <- function(interactions.with.dmps) {
 }
 
 
-summarize_dm_enhancer_genes <- function(interactions.summary){
+
+summarize_counts_dm_interactions <- function(enhancers.with.dmp, promoters.with.dmp){
+
+  symbols <- get_common_genes_from_DM_interactions(enhancers.with.dmp, promoters.with.dmp)
+
+  return(
+    list(
+      "N interactions w DM enhancer: " = length(unique(enhancers.with.dmp$interaction.id)),
+      "N interactions w DM promoter: " = length(unique(promoters.with.dmp$interaction.id)),
+      "N interactions w both: " = length(intersect(enhancers.with.dmp$interaction.id,
+                                                   promoters.with.dmp$interaction.id)),
+      "N genes w both:" = length(symbols)
+      )
+    )
+}
+
+
+summarize_dm_interaction_genes <- function(interactions.summary){
   interactions.summary %>%
     dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
     unnest(gene.name) %>%
@@ -226,6 +243,28 @@ summarize_dm_enhancer_genes <- function(interactions.summary){
     dplyr::select(gene.name, dist, bait.id, oe.id, median.pi.diff, k.dmps)
 }
 
+
+
+
+# Promoters ---------------------------------------------------------------
+
+extract_promoters_from_interactions <- function(interactions){
+
+  # We'll keep the other end (enhancer) data sequestered
+  oe.df <- data.frame(oeChr = seqnames(interactions),
+                      oeStart = start(interactions),
+                      oeEnd = end(interactions))
+
+  tmp.df <- as.data.frame(interactions) %>%
+    dplyr::select(-5:-1) %>%
+    cbind(oe.df)
+
+  makeGRangesFromDataFrame(tmp.df,
+                           keep.extra.columns = T,
+                           seqnames.field = "baitChr",
+                           start.field = "baitStart",
+                           end.field = "baitEnd")
+}
 
 
 # Big Lolly ---------------------------------------------------------------
@@ -346,15 +385,14 @@ unnest_interactions_by_gene <- function(inter){
 }
 
 
-format_and_write_interactions <- function(interactions.summary, file){
-  unnest_interactions_by_gene(interactions.summary) %>%
-    transmute(
-      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
-      `Gene Symbol` = gene.name,
-      `Promoter Locus (hg38)` = paste0(baitChr, ":", baitStart, "-", baitEnd),
-      `Enhancer Locus (hg38)` = oe.id) %>%
-    writexl::write_xlsx(file)
-  return(file)
+get_common_genes_from_DM_interactions <- function(enhancers.with.dmp, promoters.with.dmp){
+  ids <- intersect(enhancers.with.dmp$interaction.id, promoters.with.dmp$interaction.id)
+
+  unnest_interactions_by_gene(enhancers.with.dmp) %>%
+    dplyr::filter(interaction.id %in% ids) %>%
+    pull(gene.name) %>%
+    unique() %>%
+    sort()
 }
 
 

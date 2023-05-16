@@ -15,10 +15,29 @@ get_sample_ids_from_dss_inputs <- function(file){
 }
 
 
+run_chisq_test_from_counts <- function(N.in.a, N.in.b, N.in.both, N.total, labs){
+  #
+  # Args
+  # N.in.a : number of counts in group A
+  cell.11 <- N.total - N.in.a - N.in.b + N.in.both
+  cell.12 <-  N.in.a - N.in.both
+  cell.21 <- N.in.b - N.in.both
+  cell.22 <- N.in.both
+
+  X <- matrix(c(cell.11, cell.12, cell.21, cell.22), nrow = 2)
+  colnames(X) <- paste0(c("No", "Yes"), labs[1])
+  rownames(X) <- paste0(c("No", "Yes"), labs[2])
+
+  chisq.test(X)
+
+  prop.table(X, margin = 1)
+}
+
+
 get_apoe_allele_frequencies <- function(file, sample.ids){
   df <- read_csv(file, show_col_types = F) %>%
     dplyr::filter(sample_id %in% sample.ids) %>%
-    dplyr::mutate(APOE.risk.allele = ifelse(apoe_e1 == 4 | apoe_e2 == 4, 1, 0)) %>%
+    dplyr::mutate(APOE.risk.allele = (apoe_e1 == 4) + ( apoe_e2 == 4)) %>%
     dplyr::select(diagnostic_group, sample_id, APOE.risk.allele, apoe_e1, apoe_e2) %>%
     drop_na()
 }
@@ -26,9 +45,9 @@ get_apoe_allele_frequencies <- function(file, sample.ids){
 
 test_apoe_allele_frequencies <- function(apoe.df){
   tb <- apoe.df %>%
-    group_by(diagnostic_group) %>%
-    summarize(N.with.e4 = sum(APOE.risk.allele),
-              N.without.e4 = n() - N.with.e4) %>%
+    group_by(diagnostic_group, APOE.risk.allele) %>%
+    summarize(count = n()) %>%
+    pivot_wider(names_from = APOE.risk.allele, values_from = count) %>%
     column_to_rownames("diagnostic_group")
 
   return(list("Table" = tb, "Test" = chisq.test(tb)))
@@ -59,6 +78,53 @@ to_ucsc_format <- function(a, b, c){
 to_ucsc_format_v <- Vectorize(to_ucsc_format)
 
 
+get_load_ids <- function(master.df, sample.ids){
+  intersect(master.df$sample_id[master.df$diagnostic_group == "LOAD"],
+            sample.ids)
+}
+
+
+get_control_ids <- function(master.df, sample.ids){
+  intersect(master.df$sample_id[master.df$diagnostic_group == "CONTROL"],
+            sample.ids)
+}
+
+
+# Missingness quanitifcation ----------------------------------------------
+
+
+read_and_tally_subroutine <- function(files){
+  all <- do.call(rbind,
+                 lapply(X = files,
+                        FUN = fread,
+                        select = c("chromStart", "coverage", "sample")))
+
+  wide.df <- pivot_wider(all,
+                         "chromStart",
+                         names_from = "sample",
+                         values_from = "coverage")
+
+  out <- data.frame(chr = "chr1",
+             start = wide.df$chromStart,
+             end = wide.df$chromStart + 2,
+             N.missing = rowSums(is.na(wide.df)))
+
+  print("Read and pivoted one chunk...")
+  return(out)
+}
+
+read_and_join_m_cov_routine <- function(dir, sample.ids, chunk.size){
+  all.files <- file.path(dir, paste0("chr1.", sample.ids, ".bed"))
+
+  all.files.split <- split(all.files, ceiling(seq_along(all.files) / chunk.size))
+
+  counts.df <- do.call(rbind, lapply(X = all.files.split, read_and_tally_subroutine)) %>%
+    group_by(chr, start, end) %>%
+    summarize(PercentMissing = sum(N.missing) / length(sample.ids))
+
+  return(counts.df)
+}
+
 
 # Statistical functions ---------------------------------------------------
 
@@ -72,8 +138,14 @@ compute_empirical_p <- function(xx, test.value){
 
 # General reading/casting functions -----------------------------------------------
 
-get_natgen_genes <- function(ifile){
-  read_table(ifile, col_names = FALSE)$X1
+get_natgen_genes <- function(ifile, exclude_APP = T){
+  zz <- read_table(ifile, col_names = FALSE)$X1
+
+  if (exclude_APP){
+    zz[!(zz == "APP")]
+  } else {
+    zz
+  }
 }
 
 
@@ -241,6 +313,38 @@ make_df_from_two_overlapping_granges <- function(range.1, range.2){
   cbind(left, right)
 }
 
+combine_missingness_with_pvals <- function(missing.chr1.load.df,
+                                           missing.chr1.control.df,
+                                           pvals.gr){
+
+  colnames(missing.chr1.load.df)[4] <- "AD"
+  colnames(missing.chr1.control.df)[4] <- "NoAD"
+
+  miss.df <- full_join(missing.chr1.load.df,
+                               missing.chr1.control.df,
+                               by = c("chr", "start", "end"))
+
+  miss.gr <- makeGRangesFromDataFrame(miss.df, keep.extra.columns = T)
+  make_df_from_two_overlapping_granges(miss.gr, pvals.gr)
+}
+
+plot_missingness_hexbin <- function(miss.data, file){
+  z <- miss.data %>%
+    pivot_longer(contains("AD"), values_to = "Percent missing", names_to = "Group") %>%
+    ggplot(aes(x = `Percent missing`, y = -log10(lfdr))) +
+      facet_wrap(.~Group) +
+      stat_binhex() +
+      theme_minimal() +
+      scale_fill_viridis(option = "B", trans = "log", breaks = 10^(1:5)) +
+      ylab(expression(-log[10](lFDR))) +
+      geom_hline(yintercept = -log10(0.05), color = "grey40") +
+    ggtitle("Percent missing values before imputation") +
+    theme(plot.background = element_rect(fill = "white", color = "white"))
+
+  cowplot::save_plot(file, z)
+  return(file)
+}
+
 
 # Harmonic P-value routine ------------------------------------------------
 
@@ -333,6 +437,9 @@ plot_go_barchart <- function(go.df, n=25){
     scale_fill_manual(values = c("#B24745FF", "#DF8F44FF", "#00A1D5FF"))
 }
 
+
+
+
 symbols_df_to_go_df_routine <- function(file){
 
   # Assuming we read from file
@@ -354,6 +461,14 @@ convert_gene_ontology_ids_to_symbols <- function(DMGenes.go.df){
     mutate(gene.symbols = ids_to_symbols(gene.ids)) %>%
     group_by(ONTOLOGY, ID, Description, GeneRatio, BgRatio, pvalue, p.adjust) %>%
     summarize(GeneSymbols = paste(gene.symbols, collapse = ";"))
+}
+
+
+symbols_to_gene_ontology_routine <- function(symbols){
+  symbols_to_ids(symbols) %>%
+    run_gene_ontology %>%
+    go_output_to_df %>%
+    convert_gene_ontology_ids_to_symbols
 }
 
 
@@ -429,5 +544,95 @@ tally_dmps_in_genes <- function(genes.with.dmp){
     summarize(N.DMPs = n())
 }
 
+read_madrid_data <- function(file){
+  read_csv(file, show_col_types = F, skip = 1) %>%
+    dplyr::mutate(genes = str_split(`Gene Symbol(s)`, ";")) %>%
+    unnest(genes) %>%
+    drop_na()
+}
+
+
+compare_with_madrid_paper <- function(DMGenes.data, madrid.data){
+  xx <- DMGenes.data$gene_name
+  yy <- unique(madrid.data$genes)
+
+  zz <- intersect(xx, yy)
+
+  return(list("Number of shared genes:" = length(zz),
+              "Shared genes: " = zz))
+}
+
+
+create_wb_with_description <- function(desc){
+  cc <- 1:6
+
+  wb <- openxlsx::createWorkbook()
+  openxlsx::addWorksheet(wb, 1)
+  openxlsx::writeData(wb, sheet = 1,
+                      startCol = 1,
+                      startRow = 1,
+                      desc,
+                      headerStyle = )
+
+
+  openxlsx::addStyle(wb, sheet = 1, cols = cc, rows = 1, createStyle(textDecoration = "Bold"))
+
+  return(wb)
+}
+
+append_data_to_workbook <- function(wb, data){
+
+
+
+  setColWidths(wb, sheet = 1, cols = 1:ncol(data), widths = pmax(nchar(colnames(data)) * 1.2, 8) )
+  mergeCells(wb, sheet=1, cols = 1:ncol(data), rows=1)
+
+
+  openxlsx::writeData(wb = wb, sheet=1, x = data, startRow = 2,
+                      headerStyle = createStyle(textDecoration = "Bold",
+                                                halign = "center"))
+  return(wb)
+}
+
+tally_and_write_DMGenes_with_DMP_counts <- function(
+    gene.body.enrichment,
+    lfdr.cut,
+    desc,
+    file){
+
+  data <- gene.body.enrichment %>%
+    dplyr::filter(lfdr < lfdr.cut)
+
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+
+  return(file)
+}
+
+
+run_length_embed_dmps <- function(dmps.data, chr, dist){
+  tmp <- dmps.data %>%
+    dplyr::filter(chr == chr) %>%
+    arrange(start)
+
+  rle(diff(tmp$start) < dist)
+}
+
+# get_candidates_for_pyro <- function(dmps.data, dist, ){
+#   dmps.data %>%
+#     group_by(chr) %>%
+#     summarize(Runs = rle(diff(dmps.data$start) < dist))
+# }
+
+
+get_N_not_in_set <- function(dmps.gr, features.gr){
+  seqlevelsStyle(dmps.gr) <- "NCBI"
+  seqlevelsStyle(features.gr) <- "NCBI"
+
+  out <- subsetByOverlaps(x = dmps.gr, ranges = features.gr, invert = TRUE)
+  return(list("Number of DMPs not in features: " = length(out)))
+}
 
 #END

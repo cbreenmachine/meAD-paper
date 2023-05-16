@@ -1,0 +1,23 @@
+---
+title: "DMPositions Summary Stats"
+author: "Coleman Breen"
+date: "2023-03-09"
+output: html_document
+---
+
+
+```{r}
+library(data.table)
+library(tidyverse)
+
+pvals <- fread("../../DataRaw/2023-02-14-Summaries-v6/pvals.bed")
+```
+
+How many with (x) or larger effect size?
+
+```{r}
+xx <- pvals[pvals$lfdr.from.ss < 0.05, "pi.diff"] 
+sum(abs(xx) > 0.05)
+
+```
+

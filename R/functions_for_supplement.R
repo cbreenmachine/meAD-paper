@@ -44,18 +44,7 @@ plot_pvals_routine <- function(pvals.data){
   par(mfrow = c(1,2))
   plot_qq_from_pvals(pp.1)
   plot_hist_from_pvals(pp.2)
-  #
-  #
-  # plot_hist_from_pvals(pp.2)
-  # hist.recorded <- recordPlot()
-  #
-  # plot_qq_from_pvals(pp.1)
-  # qq.recorded <- recordPlot()
-  # #
-  # cowplot::plot_grid(ggdraw(qq.recorded),
-  #                    ggdraw(hist.recorded),
-  #                    labels = c("A", "B"),
-  #                    rel_widths = c(0.5, 0.5))
+
 }
 
 run_and_save_pvals_plot <- function(pvals.data, file){
@@ -235,24 +224,47 @@ process_and_write_gene_ontology_terms <- function(DMGenes.go.df, desc, file){
 }
 
 
-format_and_write_interactions <- function(interactions.summary, desc, file){
+format_and_write_dm_enhancers <- function(interactions.summary, desc, file){
 
   data <- unnest_interactions_by_gene(interactions.summary) %>%
+    dplyr::arrange(desc(k.dmps), gene.name) %>%
     transmute(
       `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
       `Gene Symbol` = gene.name,
       `Promoter Locus (hg38)` = paste0(baitChr, ":", baitStart, "-", baitEnd),
-      `Enhancer Locus (hg38)` = oe.id)
+      `Enhancer Locus (hg38)` = paste0("chr", oe.id)) %>%
+    distinct() %>%
+    arrange()
 
 
   wb <- create_wb_with_description(desc)
   wb <- append_data_to_workbook(wb, data)
 
   openxlsx::saveWorkbook(wb, file, overwrite = T)
-
-
   return(file)
 }
+
+
+format_and_write_dm_promoters <- function(promoters.summary, desc, file){
+
+  data <- unnest_interactions_by_gene(promoters.summary) %>%
+    dplyr::arrange(desc(k.dmps), gene.name) %>%
+    transmute(
+      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
+      `Gene Symbol` = gene.name,
+      `Promoter Locus (hg38)` = bait.id,
+      `Enhancer Locus (hg38)` = paste0("chr", oeChr, ":", oeStart, "-", oeEnd)) %>%
+    distinct()
+
+
+  wb <- create_wb_with_description(desc)
+  wb <- append_data_to_workbook(wb, data)
+
+  openxlsx::saveWorkbook(wb, file, overwrite = T)
+  return(file)
+}
+
+
 
 process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, desc,  file){
 
@@ -277,3 +289,152 @@ process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, de
   return(file)
 
 }
+
+
+
+
+# Array comparisons -------------------------------------------------------
+
+read_one_raw_M_Cov <- function(file){
+  out <- fread(file) %>%
+    dplyr::filter(coverage > 5) %>%
+    dplyr::transmute(chrom,
+                     start = chromStart,
+                     P = methylated / coverage,
+                     sample)
+  print(file)
+  return(out)
+}
+
+join_raw_M_Cov_files <- function(dir, common.ids){
+  all.files <- file.path(dir, paste0("chr1.", common.ids, ".bed"))
+  data.table::rbindlist(lapply(X = all.files, FUN = read_one_raw_M_Cov)) %>%
+    pivot_wider(id_cols = start, names_from = sample, values_from = P) %>%
+    dplyr::mutate(chr = "chr1", end = start + 2)
+}
+
+chunker_wrapper <- function(file){
+  chunker(file,
+          sep = "\t",
+          chunksize = 500000,
+          has_colnames = T,
+          has_rownames = F)
+}
+
+
+make_P_from_M_Cov <- function(M, Cov, chr){
+  P <- M[, -1] / Cov[ ,-1]
+
+  # Make this explicit
+  P[Cov[ ,-1] == 0] <- NA
+
+  P$chr <- chr
+  P$start <- M$chromStart
+  P$end <- M$chromStart + 2
+
+  makeGRangesFromDataFrame(P,
+                           keep.extra.columns = T,
+                           starts.in.df.are.0based = T)
+}
+
+read_and_merge_M_Cov_files <- function(file.prefix){
+  chr <- basename(file.prefix)
+
+  M.file <- paste0(file.prefix, ".M.bed")
+  Cov.file <- paste0(file.prefix, ".Cov.bed")
+
+  M_chunker <- chunker_wrapper(M.file)
+  Cov_chunker <- chunker_wrapper(Cov.file)
+
+
+  P.all.grs <- list()
+  ix <- 1
+
+  while(next_chunk(M_chunker) & next_chunk(Cov_chunker)){
+
+    M <- get_table(M_chunker)
+    Cov <- get_table(Cov_chunker)
+
+    P.all.grs[[ix]] <- make_P_from_M_Cov(M, Cov, chr)
+    ix <- ix + 1
+  }
+
+  return(do.call(c, P.all.grs))
+
+}
+
+
+read_850k_array <- function(file){
+  array <- fread(file)
+
+  array.gr <- makeGRangesFromDataFrame(array,
+                                       keep.extra.columns = T,
+                                       starts.in.df.are.0based = F)
+
+  array.gr
+}
+
+
+combine_850k_array_with_wgms <- function(array.gr, P.gr){
+
+  # Get common columns
+  cc <- intersect(names(mcols(P.gr)), names(mcols(array.gr)))
+
+  df.1 <- subsetByOverlaps(P.gr, array.gr)[ ,cc] %>%
+    as.data.frame() %>%
+    dplyr::mutate(tech = "WGMS")
+  df.2 <- subsetByOverlaps(array.gr, P.gr)[ ,cc] %>%
+    as.data.frame() %>%
+    dplyr::mutate(tech = "EPIC")
+
+  out.df <- rbind(df.1, df.2) %>%
+    dplyr::select(-c(end, width, strand)) %>%
+    pivot_longer(starts_with("X"), names_to = "sample", values_to = "methylation", ) %>%
+    pivot_wider(values_from = "methylation", names_from = "tech", values_fn = list) %>%
+    unnest(cols = c(WGMS, EPIC)) %>%
+    distinct() %>%
+    dplyr::mutate(sample = as.numeric(str_remove(sample, "X")))
+
+  return(out.df)
+}
+
+
+merge_array_and_wgms_subroutine <- function(array.gr, file.prefix){
+  P.gr <- read_and_merge_M_Cov_files(file.prefix)
+
+  # We sample because otherwise it's impossible to
+  # compute a correlation on 850k * 84 entries
+  combine_850k_array_with_wgms(array.gr, P.gr)
+}
+
+
+merge_array_and_wgms_routine <- function(array.gr, dir){
+  all.file.prefixes <- file.path(dir, paste0("chr", 1:22))
+
+  set.seed(919)
+
+  out <- lapply(X = all.file.prefixes,
+                FUN = merge_array_and_wgms_subroutine,
+                array.gr = array.gr) %>% do.call(rbind)
+
+}
+
+compute_wgms_vs_array_summary_stats <- function(chr_merged){
+
+  out <- data.frame(chr = chr_merged$seqnames[1],
+                    rho = cor(chr_merged$WGMS, chr_merged$EPIC, use = "pairwise"),
+                    N.loci = length(unique(chr_merged$start)))
+  return(out)
+}
+
+
+plot_wgms_vs_array_hexbin <- function(wgms_vs_array.df){
+  wgms_vs_array.df %>%
+    drop_na() %>%
+    sample_n(100000) %>%
+    ggplot(aes(x = EPIC, y = WGMS)) +
+    geom_hex(binwidth = c(0.01, 0.01), aes(fill = log(..density..))) +
+    scale_fill_viridis(option = "plasma") +
+    theme_classic()
+}
+

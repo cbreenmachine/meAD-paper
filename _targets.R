@@ -15,6 +15,7 @@ DMGENE.ALPHA <- 0.01
 # Set target options:
 tar_option_set(
   packages = c("tidyverse",
+               "tibble",
                "readxl",
                "data.table",
                "viridis",
@@ -31,14 +32,15 @@ tar_option_set(
                "devEMF",
                "htmlwidgets",
                "rjson",
-               "openxlsx"
+               "openxlsx",
+               "chunkR"
   ),
   format = "rds" # default storage format
 )
 
 
 # Replace the target list below with your own:
-list(
+preliminaries <- list(
 
   tar_target(sample.ids, get_sample_ids_from_dss_inputs(
     file.path(DATA.IDIR, "DSS-outputs-chr22.RData"))),
@@ -51,6 +53,11 @@ list(
   tar_target(apoe.test, test_apoe_allele_frequencies(apoe.df)),
   tar_target(madrid.data, read_madrid_data("./DataReference/madrid_cpgs_list.csv")),
 
+  # Integrate with EPIC array later
+  tar_target(array.gr, read_850k_array("DataRaw/array.M.hg38.bed")),
+  tar_target(common.ids, intersect(sort(colnames(mcols(array.gr))), sample.ids)),
+
+  # Missingness
   tar_target(missing.chr1.load.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", load.sample.ids, 20)),
   tar_target(missing.chr1.control.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", control.sample.ids, 20)),
 
@@ -101,207 +108,254 @@ list(
   tar_target(dmps.genic.sankey.plot,
              screenshot_sankey(plot_sankey(dmps.genic.df, nrow(dmps.data)),
                                "_targets/figs/dmps-genic-sankey.png"),
-             format="file"),
+             format="file")
+)
+
+# Array Comparison --------------------------------------------------------
+
+
+# Keep mapping sub-pipeline outside of the list
+raw_wgms_vs_array <- list(
+  tar_target(raw.chr1.wgms, join_raw_M_Cov_files("DataRaw/2023-04-28-raw-MCov-chr1/", common.ids)),
+  tar_target(raw.chr1.wgms.gr, makeGRangesFromDataFrame(raw.chr1.wgms,
+                                                        keep.extra.columns = T,
+                                                        starts.in.df.are.0based = T)),
+  tar_target(raw.chr1.merged, combine_850k_array_with_wgms(array.gr, raw.chr1.wgms.gr))
+)
+
+
+wgms_vs_array <-
+  tar_map(
+    unlist = F,
+    values = data.frame(chr = paste0("chr", 1:22)),
+    tar_target(merged,
+               merge_array_and_wgms_subroutine(
+                 array.gr,
+                 paste0("DataRaw/2023-05-17-MCov-imputed/", chr)
+               )),
+    tar_target(sampled, sample_frac(merged, 0.1)),
+    tar_target(stats, compute_wgms_vs_array_summary_stats(merged))
+)
+
+
+wgms_vs_array_combined <- list(
+  tar_combine(wgms_vs_array.df, wgms_vs_array[["sampled"]]),
+  tar_combine(wgms_vs_array.stats, wgms_vs_array[["stats"]])
+)
+
+
+
+
 
 
 # Sequencing quality plot -------------------------------------------------
 
-tar_target(depth.df,
-           munge_sequencing_depth("./DataSummaries/2023-01-30-AllDepth.txt", sample.ids)),
-tar_target(effective.cov.df,
-           munge_effective_coverage("./DataSummaries/2023-02-01-AverageCoverage.csv",
-                                    sample.ids)),
-tar_target(coverage.plot, plot_coverage_hist_routine(
-  depth.df, effective.cov.df,
-  "_targets/figs/seq-depth-effective-coverage-histograms.png"
-), format = "file"),
-tar_target(pvals.before.after.plot,
-           run_and_save_pvals_plot(pvals.data, "_targets/figs/pvals-before-after.pdf"),
-           format="file"),
-tar_target(birdseye.plot,
-           stitch_birdseye_fig(
-             dmps.volcano.plot,
-             dmps.genic.sankey.plot,
-             dmps.hyper.pi.plot,
-             dmps.cpg.pi.plot,
-             "_targets/figs/dmps-summary-panel.png"
+sequencing_quality <- list(
+  tar_target(depth.df,
+             munge_sequencing_depth("./DataSummaries/2023-01-30-AllDepth.txt", sample.ids)),
+  tar_target(effective.cov.df,
+             munge_effective_coverage("./DataSummaries/2023-02-01-AverageCoverage.csv",
+                                      sample.ids)),
+  tar_target(coverage.plot, plot_coverage_hist_routine(
+    depth.df, effective.cov.df,
+    "_targets/figs/seq-depth-effective-coverage-histograms.png"
+  ), format = "file"),
+  tar_target(pvals.before.after.plot,
+             run_and_save_pvals_plot(pvals.data, "_targets/figs/pvals-before-after.pdf"),
+             format="file"),
+  tar_target(birdseye.plot,
+             stitch_birdseye_fig(
+               dmps.volcano.plot,
+               dmps.genic.sankey.plot,
+               dmps.hyper.pi.plot,
+               dmps.cpg.pi.plot,
+               "_targets/figs/dmps-summary-panel.png"
+               )
              )
-           ),
+)
 
 # DM Genes (pc = protein coding and promoters) --------------------------------
 # Check if there are DMPs in any of the Nature Genetics list of genes
-tar_target(genes.expanded.25kb,
-           get_gene_bodies(upstream = 25000,
-                           downstream = 25000,
-                           autosomes_only = T,
-                           protein_coding_only = T)),
-tar_target(NG.genes.expanded.25kb, filter_by_gene_symbols(genes.expanded.25kb, natgen.symbols)),
-tar_target(NG.genes.with.dmp, make_df_from_two_overlapping_granges(dmps.gr, NG.genes.expanded.25kb)),
-tar_target(NG.tally.df, tally_dmps_in_genes(NG.genes.with.dmp)),
 
-# Gene Body (GB)
-tar_target(gene.bodies,
-           get_gene_bodies(upstream = 3000,
-                           downstream = 200,
-                           autosomes_only = T,
-                           protein_coding_only = T)),
-tar_target(gene.bodies.with.dmp, make_df_from_two_overlapping_granges(dmps.gr, gene.bodies)),
-tar_target(gene.bodies.tally.df, tally_dmps_in_genes(gene.bodies.with.dmp)),
-tar_target(N.DMPs.not.in.genes, get_N_not_in_set(dmps.gr, gene.bodies)),
+diff_methylation <- list(
+  tar_target(genes.expanded.25kb,
+             get_gene_bodies(upstream = 25000,
+                             downstream = 25000,
+                             autosomes_only = T,
+                             protein_coding_only = T)),
+  tar_target(NG.genes.expanded.25kb, filter_by_gene_symbols(genes.expanded.25kb, natgen.symbols)),
+  tar_target(NG.genes.with.dmp, make_df_from_two_overlapping_granges(dmps.gr, NG.genes.expanded.25kb)),
+  tar_target(NG.tally.df, tally_dmps_in_genes(NG.genes.with.dmp)),
 
-# Baby bear: promoters only
-tar_target(promoters, get_protein_coding_promoters(upstream = 10000, downstream = 500)),
+  # Gene Body (GB)
+  tar_target(gene.bodies,
+             get_gene_bodies(upstream = 3000,
+                             downstream = 200,
+                             autosomes_only = T,
+                             protein_coding_only = T)),
+  tar_target(gene.bodies.with.dmp, make_df_from_two_overlapping_granges(dmps.gr, gene.bodies)),
+  tar_target(gene.bodies.tally.df, tally_dmps_in_genes(gene.bodies.with.dmp)),
+  tar_target(N.DMPs.not.in.genes, get_N_not_in_set(dmps.gr, gene.bodies)),
 
-# Combine P-values and such
-tar_target(gene.body.enrichment, harmonic_pvalue_routine(pvals.gr, gene.bodies, ALPHA)),
-tar_target(promoter.enrichment, harmonic_pvalue_routine(pvals.gr, promoters, ALPHA)),
+  # Baby bear: promoters only
+  tar_target(promoters, get_protein_coding_promoters(upstream = 10000, downstream = 500)),
 
-
-tar_target(madrid.comp,
-           compare_with_madrid_paper(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
-                             madrid.data)
-),
+  # Combine P-values and such
+  tar_target(gene.body.enrichment, harmonic_pvalue_routine(pvals.gr, gene.bodies, ALPHA)),
+  tar_target(promoter.enrichment, harmonic_pvalue_routine(pvals.gr, promoters, ALPHA)),
 
 
-# Gene ontologiy for DM GENES
-tar_target(DM.genes.table,
-           my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
-                        file = "_targets/tables/gene-ontology-DMGenes.csv"
-                        ),
-           format = "file"),
-tar_target(DM.genes.go.df, symbols_df_to_go_df_routine(DM.genes.table)),
+  tar_target(madrid.comp,
+             compare_with_madrid_paper(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
+                               madrid.data)
+  ),
 
-tar_target(DM.genes.gene.ont,
-           cowplot::save_plot(plot_go_barchart(DM.genes.go.df, n = 25),
-                              filename = "_targets/figs/gene-ontology-DMGenes.png",
-                              base_height = 7, base_width = 14)),
 
+  # Gene ontologiy for DM GENES
+  tar_target(DM.genes.table,
+             my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
+                          file = "_targets/tables/gene-ontology-DMGenes.csv"
+                          ),
+             format = "file"),
+  tar_target(DM.genes.go.df, symbols_df_to_go_df_routine(DM.genes.table)),
+
+  tar_target(DM.genes.gene.ont,
+             cowplot::save_plot(plot_go_barchart(DM.genes.go.df, n = 25),
+                                filename = "_targets/figs/gene-ontology-DMGenes.png",
+                                base_height = 7, base_width = 14))
+)
 
 
 # PCHi-C Analysis ---------------------------------------------------------
 
-tar_target(interactions.hg19, clean_interactions_data("./DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")),
-tar_target(interactions.hg38, lift_promoter_capture_data_to_hg38(interactions.hg19, chain.19to38, return.granges = T)),
+pchic <- list(
+  tar_target(interactions.hg19, clean_interactions_data("./DataReference/PCHi-C/PCHiC_peak_matrix_cutoff5.txt")),
+  tar_target(interactions.hg38, lift_promoter_capture_data_to_hg38(interactions.hg19, chain.19to38, return.granges = T)),
 
-tar_target(enhancers.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
-tar_target(promoters.to.test, extract_promoters_from_interactions(enhancers.to.test)),
+  tar_target(enhancers.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
+  tar_target(promoters.to.test, extract_promoters_from_interactions(enhancers.to.test)),
 
-# Curate DMPs
-tar_target(enhancers.with.dmp, combine_dmps_with_interactions(dmps.gr, enhancers.to.test)),
-tar_target(promoters.with.dmp, combine_dmps_with_interactions(dmps.gr, promoters.to.test)),
+  # Curate DMPs
+  tar_target(enhancers.with.dmp, combine_dmps_with_interactions(dmps.gr, enhancers.to.test)),
+  tar_target(promoters.with.dmp, combine_dmps_with_interactions(dmps.gr, promoters.to.test)),
 
-tar_target(shared.gene.symbols,
-           get_common_genes_from_DM_interactions(
-             enhancers.with.dmp,
-             promoters.with.dmp)),
+  tar_target(shared.gene.symbols,
+             get_common_genes_from_DM_interactions(
+               enhancers.with.dmp,
+               promoters.with.dmp)),
 
-tar_target(DMEnhancer.DMPromoter.summary, summarize_counts_dm_interactions(enhancers.with.dmp, promoters.with.dmp)),
-tar_target(DMEnhancer.DMPromoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),
+  tar_target(DMEnhancer.DMPromoter.summary, summarize_counts_dm_interactions(enhancers.with.dmp, promoters.with.dmp)),
+  tar_target(DMEnhancer.DMPromoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),
 
+  tar_target(enhancers.summary, summarize_interactions_with_dmp(enhancers.with.dmp)),
+  tar_target(enhancers.genes.df, summarize_dm_interaction_genes(enhancers.summary)),
 
+  tar_target(promoters.summary, summarize_interactions_with_dmp(promoters.with.dmp)),
+  tar_target(promoters.genes.df, summarize_dm_interaction_genes(promoters.summary)),
 
-tar_target(enhancers.summary, summarize_interactions_with_dmp(enhancers.with.dmp)),
-tar_target(enhancers.genes.df, summarize_dm_interaction_genes(enhancers.summary)),
+  tar_target(test.enhancer.enrichment,
+             test_enrichment_for_dmps(pvals.gr,
+                                      dmps.gr,
+                                      enhancers.to.test,
+                                      B=10000)),
+  tar_target(test.promoter.enrichment,
+             test_enrichment_for_dmps(pvals.gr,
+                                      dmps.gr,
+                                      promoters.to.test,
+                                      B=10000)),
 
-tar_target(promoters.summary, summarize_interactions_with_dmp(promoters.with.dmp)),
-tar_target(promoters.genes.df, summarize_dm_interaction_genes(promoters.summary)),
+  tar_target(plot.enhancer.enrichment,
+             plot_enhancer_enrichment_for_dmps(test.enhancer.enrichment,
+                                               "_targets/figs/test-enhancer-enrichment.png"),
+             format = "file"),
 
-tar_target(test.enhancer.enrichment,
-           test_enrichment_for_dmps(pvals.gr,
-                                    dmps.gr,
-                                    enhancers.to.test,
-                                    B=10000)),
-tar_target(test.promoter.enrichment,
-           test_enrichment_for_dmps(pvals.gr,
-                                    dmps.gr,
-                                    promoters.to.test,
-                                    B=10000)),
-
-tar_target(plot.enhancer.enrichment,
-           plot_enhancer_enrichment_for_dmps(test.enhancer.enrichment,
-                                             "_targets/figs/test-enhancer-enrichment.png"),
-           format = "file"),
-
-tar_target(plot.promoter.enrichment,
-           plot_enhancer_enrichment_for_dmps(test.promoter.enrichment,
-                                             "_targets/figs/test-promoter-enrichment.png"),
-           format = "file"),
-
-tar_target(interactions.for.ucsc,
-           export_significant_interactions_to_UCSC(enhancers.with.dmp)),
-tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff.exp.data, enhancers.with.dmp)),
+  tar_target(plot.promoter.enrichment,
+             plot_enhancer_enrichment_for_dmps(test.promoter.enrichment,
+                                               "_targets/figs/test-promoter-enrichment.png"),
+             format = "file"),
+  tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff.exp.data, enhancers.with.dmp)),
+  tar_target(pchic.stats, get_summary_stats_pchic(enhancers.to.test, enhancers.with.dmp)),
+  tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/"))
+)
 
 # Export UCSC -------------------------------------------------------------
-tar_target(interactions.for.ucsc.bed,
-           format_and_write_ucsc_interactions(
-             interactions.for.ucsc,
-             "_targets/ucsc/interactions-with-DMP.hg38.bb"),
-           format = "file"),
-tar_target(dmps.lolly,
-           format_and_write_ucsc_lolly(pvals.gr, "_targets/ucsc/DMPs-lolly.hg38.bb", ALPHA),
-           format = "file"),
 
+ucsc_exports <- list(
+  tar_target(interactions.for.ucsc,
+             export_significant_interactions_to_UCSC(enhancers.with.dmp)),
+  tar_target(interactions.for.ucsc.bed,
+             format_and_write_ucsc_interactions(
+               interactions.for.ucsc,
+               "_targets/ucsc/interactions-with-DMP.hg38.bb"),
+             format = "file"),
+  tar_target(dmps.lolly,
+             format_and_write_ucsc_lolly(pvals.gr, "_targets/ucsc/DMPs-lolly.hg38.bb", ALPHA),
+             format = "file")
+)
 
-# Key summary stats -------------------------------------------------------
-
-tar_target(pchic.stats, get_summary_stats_pchic(enhancers.to.test, enhancers.with.dmp)),
-tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/")),
 
 # Write out the data sets -------------------------------------------------
 
-# 1. DMPs (good)
-tar_target(table.s1.DMPs,
-           process_and_write_dmps(
-             dmps.gr,
-             "Table S1: DMPs.List of Differentially Methylated Positions (DMPs) with coordinates (hg38), effect sizes, and local False-Discovery Rates (lFDRs)",
-             "_targets/tables/supplemental/S1-DMPs.xlsx"),
-           format = "file"),
+supplemental_tables <- list(
 
-# 2. Nature genetics AD Risk Loci
-tar_target(table.s2.NatGenLoci25kb,
-           process_and_write_nature_genetics_list(
-             NG.tally.df,
-             natgen.symbols,
-             "Table S2: List of 75 previously identified genetics risk loci with number of DMPs (if any) within 25,000 nucleotides of gene start/stop",
-             "_targets/tables/supplemental/S2-ADRiskLociNumberOfDMPs.xlsx"
-           ),
-           format = "file"),
+  # 1. DMPs (good)
+  tar_target(table.s1.DMPs,
+             process_and_write_dmps(
+               dmps.gr,
+               "Table S1: DMPs.List of Differentially Methylated Positions (DMPs) with coordinates (hg38), effect sizes, and local False-Discovery Rates (lFDRs)",
+               "_targets/tables/supplemental/S1-DMPs.xlsx"),
+             format = "file"),
 
-# 3. All genes + Nature genetics annotation
-tar_target(table.s3.DMGenes,
-           process_and_write_DM_genes(
-             gene.body.enrichment,
-             "Table S3: Differentially methylated genes with coordinates and lFDRs",
-             "_targets/tables/supplemental/S3-DMGenes.xlsx"
-           ),
-           format = "file"),
+  # 2. Nature genetics AD Risk Loci
+  tar_target(table.s2.NatGenLoci25kb,
+             process_and_write_nature_genetics_list(
+               NG.tally.df,
+               natgen.symbols,
+               "Table S2: List of 75 previously identified genetics risk loci with number of DMPs (if any) within 25,000 nucleotides of gene start/stop",
+               "_targets/tables/supplemental/S2-ADRiskLociNumberOfDMPs.xlsx"
+             ),
+             format = "file"),
 
-
-# 4. Gene ontologies
-tar_target(table.s4.GeneOntologies,
-           process_and_write_gene_ontology_terms(
-             DM.genes.go.df,
-             "Table S4: Gene Ontologies for DM Genes",
-             "_targets/tables/supplemental/S4-DMGenes-GeneOntologies.xlsx"),
-           format = "file"),
-
-tar_target(table.s5.DMEnhancers,
-           format_and_write_interactions(
-             enhancers.summary,
-             "Table S5: Promoter-enhancer interactions with at least one DMP",
-             "_targets/tables/supplemental/S5-DMEnhancers.xlsx"),
-           format = "file"),
+  # 3. All genes + Nature genetics annotation
+  tar_target(table.s3.DMGenes,
+             process_and_write_DM_genes(
+               gene.body.enrichment,
+               "Table S3: Differentially methylated genes with coordinates and lFDRs",
+               "_targets/tables/supplemental/S3-DMGenes.xlsx"
+             ),
+             format = "file"),
 
 
-# Internal (not paper supplement) data ------------------------------------
+  # 4. Gene ontologies
+  tar_target(table.s4.GeneOntologies,
+             process_and_write_gene_ontology_terms(
+               DM.genes.go.df,
+               "Table S4: Gene Ontologies for DM Genes",
+               "_targets/tables/supplemental/S4-DMGenes-GeneOntologies.xlsx"),
+             format = "file"),
 
-tar_target(N.DMPs.DMGenes.table,
-           tally_and_write_DMGenes_with_DMP_counts(
-             gene.body.enrichment,
-             DMGENE.ALPHA,
-             "Number of DMPs in DM genes",
-             "_targets/tables/DMGenesWithDMPCounts.xlsx"),
-           format = "file")
-
-
+  tar_target(table.s5.DMPromoters,
+             format_and_write_dm_promoters(
+               promoters.summary,
+               "Table S5: Promoter-enhancer interactions with at least one DMP in promoter",
+               "_targets/tables/supplemental/S5-DMPromoters.xlsx"),
+             format = "file"),
+  tar_target(table.s6.DMEnhancers,
+             format_and_write_dm_enhancers(
+               enhancers.summary,
+               "Table S6: Promoter-enhancer interactions with at least one DMP in enhancer",
+               "_targets/tables/supplemental/S6-DMEnhancers.xlsx"),
+             format = "file")
 )
+
+
+
+list(preliminaries,
+     raw_wgms_vs_array,
+     wgms_vs_array,
+     wgms_vs_array_combined,
+     diff_methylation,
+     pchic,
+     sequencing_quality,
+     supplemental_tables)
+

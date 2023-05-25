@@ -5,11 +5,11 @@ ucsc.order.cols <- c("chrom", "chromStart", "chromEnd",
                      "sourceChrom", "sourceStart", "sourceEnd", "sourceName", "sourceStrand",
                      "targetChrom", "targetStart", "targetEnd", "targetName", "targetStrand")
 
-unnest_interactions <- function(interactions.gr){
-  interactions.gr %>%
-    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
-    tidyr::unnest(gene.name)
-}
+# unnest_interactions <- function(interactions.gr){
+#   interactions.gr %>%
+#     dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
+#     tidyr::unnest(gene.name)
+# }
 
 
 clean_interactions_data <- function(file){
@@ -169,7 +169,7 @@ plot_enhancer_enrichment_for_dmps <- function(enrichment.result, file) {
     geom_histogram(bins = 25) +
     theme_minimal() +
     geom_vline(xintercept = enrichment.result$test.stat$N.dmps, color = "red") +
-    xlab("Number of unique DMPs residing in enhancer") +
+    xlab("Number of unique DMPs residing in feature") +
     ylab("Density") +
     labs(caption = paste0("Two-sided p-value: ", pval.str)) +
     theme(plot.background = element_rect(fill = "white", color = "white"))
@@ -181,7 +181,8 @@ plot_enhancer_enrichment_for_dmps <- function(enrichment.result, file) {
 
 combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
   # Overlap DMPs and interactions, and return a data frame.
-  # There will be one row for each dmp by interaction (so some duplication if an)
+  # There will be one row for each dmp by interaction (so some duplication if an enhancer
+  # is overlapped by multiple DMPs)
   make_df_from_two_overlapping_granges(dmps.gr, interactions.gr) %>%
     group_by(interaction.id) %>%
     dplyr::mutate(
@@ -190,21 +191,21 @@ combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
     ungroup()
 }
 
-get_unique_genes_from_interactions <- function(interactions, protein_coding = F) {
-  tmp <- unnest_interactions(interactions)
-
-  out <- sort(unique(tmp$baitNameSplit))
-
-  if (protein_coding) {
-
-    genes <- genes(get_ensdb())
-    filter.symbols <- genes$gene_name[genes$gene_biotype == "protein_coding"]
-
-    out[out %in% filter.symbols]
-  } else {
-    out
-  }
-}
+# get_unique_genes_from_interactions <- function(interactions, protein_coding = F) {
+#   tmp <- unnest_interactions(interactions)
+#
+#   out <- sort(unique(tmp$baitNameSplit))
+#
+#   if (protein_coding) {
+#
+#     genes <- genes(get_ensdb())
+#     filter.symbols <- genes$gene_name[genes$gene_biotype == "protein_coding"]
+#
+#     out[out %in% filter.symbols]
+#   } else {
+#     out
+#   }
+# }
 
 
 
@@ -218,10 +219,66 @@ summarize_interactions_with_dmp <- function(interactions.with.dmps) {
 }
 
 
+subset_interactions_by_diff_exp_data <- function(interactions, genes.of.interest){
+  interactions %>%
+    dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
+    tidyr::unnest(gene.name) %>%
+    dplyr::filter(gene.name %in% genes.of.interest) %>%
+    dplyr::select(-gene.name) %>%
+    distinct()
+}
+
+
+count_enhancers_with_dmp <- function(enhancers.with.dmp){
+  cpg.ids <- paste0(enhancers.with.dmp$chr, ":", enhancers.with.dmp$start)
+  enhancer.ids <- enhancers.with.dmp$oe.id
+  interaction.ids <- enhancers.with.dmp$interaction.id
+
+  genes <- enhancers.with.dmp %>%
+    unnest_interactions_by_gene() %>%
+    dplyr::pull(gene.name)
+
+  return(list(
+    paste0("N unique DMPs: ", length(unique(cpg.ids))),
+    paste0("N unique enhancers: ", length(unique(enhancer.ids))),
+    paste0("N interactions: ", length(unique(interaction.ids))),
+    paste0("N unique gene: ", length(unique(genes)))
+  ))
+}
+
+
+count_promoters_with_dmp <- function(promoters.with.dmp){
+  cpg.ids <- paste0(promoters.with.dmp$chr, ":", promoters.with.dmp$start)
+  promoter.ids <- promoters.with.dmp$bait.id
+  interaction.ids <- promoters.with.dmp$interaction.id
+
+  genes <- promoters.with.dmp %>%
+    unnest_interactions_by_gene() %>%
+    dplyr::pull(gene.name)
+
+  return(list(
+    paste0("N unique DMPs: ", length(unique(cpg.ids))),
+    paste0("N unique promoters: ", length(unique(promoter.ids))),
+    paste0("N interactions: ", length(unique(interaction.ids))),
+    paste0("N unique gene: ", length(unique(genes)))
+  ))
+}
+
+
 
 summarize_counts_dm_interactions <- function(enhancers.with.dmp, promoters.with.dmp){
 
   symbols <- get_common_genes_from_DM_interactions(enhancers.with.dmp, promoters.with.dmp)
+
+  N.enhancer.genes <- enhancers.with.dmp %>%
+    unnest_interactions_by_gene() %>%
+    dplyr::pull(gene.name) %>%
+    unique() %>% length()
+
+  N.promoter.genes <- promoters.with.dmp %>%
+    unnest_interactions_by_gene() %>%
+    dplyr::pull(gene.name) %>%
+    unique() %>% length()
 
   return(
     list(
@@ -229,10 +286,36 @@ summarize_counts_dm_interactions <- function(enhancers.with.dmp, promoters.with.
       "N interactions w DM promoter: " = length(unique(promoters.with.dmp$interaction.id)),
       "N interactions w both: " = length(intersect(enhancers.with.dmp$interaction.id,
                                                    promoters.with.dmp$interaction.id)),
+      "N genes w DM enhancer" = N.enhancer.genes,
+      "N genes w DM promoter" = N.promoter.genes,
       "N genes w both:" = length(symbols)
       )
     )
 }
+
+
+summarize_dmp_counts_in_enhancers <- function(dmps.in.enhancer.df){
+  dmps.in.enhancer.df %>%
+    dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
+    group_by(oe.id, baitName) %>%
+    summarize(n.dmps = n_distinct(cpg.id))
+}
+
+
+summarize_dmp_counts_in_promoters <- function(dmps.in.promoter.df){
+  dmps.in.promoter.df %>%
+    dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
+    group_by(bait.id) %>%
+    summarize(n.dmps = n_distinct(cpg.id))
+}
+
+
+
+
+
+# dmps.in.enhancer.df %>% dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%  group_by(cpg.id)
+
+
 
 
 summarize_dm_interaction_genes <- function(interactions.summary){
@@ -396,26 +479,28 @@ get_common_genes_from_DM_interactions <- function(enhancers.with.dmp, promoters.
 }
 
 
-test_ranks_of_pchic_rnaseq <- function(diff_exp.data, interactions.with.dmp){
+test_ranks_of_pchic_rnaseq <- function(diff.exp.data, dmps.in.enhancer.df){
 
   # Need one gene per row
-  inter.unnested <- unnest_interactions_by_gene(interactions.with.dmp)
-
-  # Need one representative enhancer per gene
-  inter <- inter.unnested %>%
-    dplyr::select(gene.name, k.dmps, median.pi.diff) %>%
+  data.by.enhancers <- dmps.in.enhancer.df %>%
+    dplyr::select(oe.id, baitName, median.pi.diff, k.dmps) %>%
+    distinct() %>%
+    unnest_interactions_by_gene() %>%
     dplyr::group_by(gene.name) %>%
-    arrange(abs(median.pi.diff)) %>%
-    dplyr::slice(ceiling(n()/2)) # grab the most central
+    summarize(mean.dmps.per.enhancer = mean(k.dmps),
+              N.enhancers = n_distinct(oe.id),
+              median.pi.diff = median(median.pi.diff)) %>%
+    distinct()
+
 
   # Joined by gene.name
-  tmp <- inner_join(diff_exp.data, inter, by = "gene.name")
+  tmp <- inner_join(diff.exp.data, data.by.enhancers, by = "gene.name")
 
   xx <- abs(tmp$logFC)
   yy <- abs(tmp$median.pi.diff)
 
   return(list(
-    "N enhancer genes" = length(unique(inter$gene.name)),
+    "N enhancer genes" = length(unique(data.by.enhancers$gene.name)),
     "N common (DE, DME) genes" = length(unique(tmp$gene.name)),
     "Kendall's rank test p-value" = cor.test(xx, yy, method = "kendall")$p.val
   ))

@@ -45,12 +45,25 @@ preliminaries <- list(
   tar_target(sample.ids, get_sample_ids_from_dss_inputs(
     file.path(DATA.IDIR, "DSS-outputs-chr22.RData"))),
 
-  tar_target(master.df, read_csv("DataRaw/masterSamplesheet.csv", show_col_types = F)),
-  tar_target(load.sample.ids, get_load_ids(master.df, sample.ids)),
-  tar_target(control.sample.ids, get_control_ids(master.df, sample.ids)),
+  tar_target(master.full.df, read_csv("DataRaw/masterSamplesheet.csv", show_col_types = F)),
+  tar_target(master.df, munge_master_df(master.full.df, sample.ids)),
 
-  tar_target(apoe.df, get_apoe_allele_frequencies("DataRaw/masterSamplesheet.csv", sample.ids)),
-  tar_target(apoe.test, test_apoe_allele_frequencies(apoe.df)),
+  tar_target(load.sample.ids, get_group_ids(master.df, "LOAD")),
+  tar_target(control.sample.ids, get_group_ids(master.df, "CONTROL")),
+  tar_target(mci.sample.ids, get_group_ids(master.full.df, "MCI")),
+
+  # tar_target(apoe.df, get_apoe_allele_frequencies("DataRaw/masterSamplesheet.csv", sample.ids)),
+
+  tar_target(ancestry.test, tabulate_and_test(master.df, "race_primary", "fisher")),
+  tar_target(source.test, tabulate_and_test(master.df, "source", "chi")),
+  tar_target(sex.test, tabulate_and_test(master.df, "sex", "chi")),
+  tar_target(APOE.test, tabulate_and_test(master.df, "APOE_risk_allele", "chi")),
+
+  tar_target(age.test, test_continuous(master.df, "age_at_visit")),
+  tar_target(bmi.test, test_continuous(master.df, "bmi")),
+  tar_target(education.test, test_continuous(master.df, "education")),
+
+  # tar_target(apoe.test, test_apoe_allele_frequencies(apoe.df)),
   tar_target(madrid.data, read_madrid_data("./DataReference/madrid_cpgs_list.csv")),
 
   # Integrate with EPIC array later
@@ -58,11 +71,11 @@ preliminaries <- list(
   tar_target(common.ids, intersect(sort(colnames(mcols(array.gr))), sample.ids)),
 
   # Missingness
-  tar_target(missing.chr1.load.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", load.sample.ids, 20)),
-  tar_target(missing.chr1.control.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", control.sample.ids, 20)),
-
-  tar_target(miss.data, combine_missingness_with_pvals(missing.chr1.load.df, missing.chr1.control.df, pvals.gr)),
-  tar_target(miss.hexbin.plot, plot_missingness_hexbin(miss.data, "_targets/figs/missingness-hexbin.chr1.png")),
+  # tar_target(missing.chr1.load.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", load.sample.ids, 20)),
+  # tar_target(missing.chr1.control.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", control.sample.ids, 20)),
+  #
+  # tar_target(miss.data, combine_missingness_with_pvals(missing.chr1.load.df, missing.chr1.control.df, pvals.gr)),
+  # tar_target(miss.hexbin.plot, plot_missingness_hexbin(miss.data, "_targets/figs/missingness-hexbin.chr1.png")),
 
   ########## GET PUBLIC DATA ##########
   tar_target(chain.19to38, download_chain_from_ucsc(DATA.REFERENCE.DIR, "https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz")),
@@ -198,29 +211,26 @@ diff_methylation <- list(
   tar_target(N.DMPs.not.in.genes, get_N_not_in_set(dmps.gr, gene.bodies)),
 
   # Baby bear: promoters only
-  tar_target(promoters, get_protein_coding_promoters(upstream = 10000, downstream = 500)),
+  tar_target(promoters, get_protein_coding_promoters(upstream = 5000, downstream = 200)),
 
   # Combine P-values and such
   tar_target(gene.body.enrichment, harmonic_pvalue_routine(pvals.gr, gene.bodies, ALPHA)),
   tar_target(promoter.enrichment, harmonic_pvalue_routine(pvals.gr, promoters, ALPHA)),
 
-
+  tar_target(dm.genes.df, dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA,
+                                        N.CpGs > 0)),
   tar_target(madrid.comp,
-             compare_with_madrid_paper(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
-                               madrid.data)
+             compare_with_madrid_paper(
+               dm.genes.df,
+               madrid.data
+              )
   ),
 
 
-  # Gene ontologiy for DM GENES
-  tar_target(DM.genes.table,
-             my_write_csv(dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA),
-                          file = "_targets/tables/gene-ontology-DMGenes.csv"
-                          ),
-             format = "file"),
-  tar_target(DM.genes.go.df, symbols_df_to_go_df_routine(DM.genes.table)),
+  tar_target(dm.genes.go.df, symbols_to_gene_ontology_routine(dm.genes.df$gene_name)),
 
-  tar_target(DM.genes.gene.ont,
-             cowplot::save_plot(plot_go_barchart(DM.genes.go.df, n = 25),
+  tar_target(dm.genes.gene.ont.df,
+             cowplot::save_plot(plot_go_barchart(dm.genes.go.df, n = 25),
                                 filename = "_targets/figs/gene-ontology-DMGenes.png",
                                 base_height = 7, base_width = 14))
 )
@@ -233,49 +243,71 @@ pchic <- list(
   tar_target(interactions.hg38, lift_promoter_capture_data_to_hg38(interactions.hg19, chain.19to38, return.granges = T)),
 
   tar_target(enhancers.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
-  tar_target(promoters.to.test, extract_promoters_from_interactions(enhancers.to.test)),
+  tar_target(baits.to.test, extract_promoters_from_interactions(enhancers.to.test)),
+  tar_target(promoters.to.test, subsetByOverlaps(baits.to.test, promoters)),
 
   # Curate DMPs
-  tar_target(enhancers.with.dmp, combine_dmps_with_interactions(dmps.gr, enhancers.to.test)),
-  tar_target(promoters.with.dmp, combine_dmps_with_interactions(dmps.gr, promoters.to.test)),
+  # TODO: turn this into mapped target, lots of duplication
+  tar_target(dmps.in.enhancer.df, combine_dmps_with_interactions(dmps.gr, enhancers.to.test)),
+  tar_target(dmps.in.promoter.df, combine_dmps_with_interactions(dmps.gr, promoters.to.test)),
+
+  # Mostly questions from RA May 22, 2023
+  tar_target(dmp.counts.in.enhancer.df, summarize_dmp_counts_in_enhancers(dmps.in.enhancer.df)),
+  tar_target(dmp.counts.in.promoter.df, summarize_dmp_counts_in_promoters(dmps.in.promoter.df)),
 
   tar_target(shared.gene.symbols,
              get_common_genes_from_DM_interactions(
-               enhancers.with.dmp,
-               promoters.with.dmp)),
+               dmps.in.enhancer.df,
+               dmps.in.promoter.df)),
 
-  tar_target(DMEnhancer.DMPromoter.summary, summarize_counts_dm_interactions(enhancers.with.dmp, promoters.with.dmp)),
-  tar_target(DMEnhancer.DMPromoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),
+  tar_target(dm.enhancer.promoter.summary, summarize_counts_dm_interactions(dmps.in.enhancer.df, dmps.in.promoter.df)),
 
-  tar_target(enhancers.summary, summarize_interactions_with_dmp(enhancers.with.dmp)),
-  tar_target(enhancers.genes.df, summarize_dm_interaction_genes(enhancers.summary)),
+  # Gene ontology for genes with DM promoters and DM enhancers
+  tar_target(dm.enhancer.promoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),
 
-  tar_target(promoters.summary, summarize_interactions_with_dmp(promoters.with.dmp)),
-  tar_target(promoters.genes.df, summarize_dm_interaction_genes(promoters.summary)),
+  tar_target(enhancers.counts, count_enhancers_with_dmp(dmps.in.enhancer.df)),
+  tar_target(enhancers.natgen.counts,
+             count_enhancers_with_dmp(
+               subset_interactions_by_diff_exp_data(dmps.in.enhancer.df, diff.exp.data$gene.name))),
+
+  tar_target(enhancers.summary, summarize_interactions_with_dmp(dmps.in.enhancer.df)),
+  tar_target(dm.enhancers.genes.df, summarize_dm_interaction_genes(enhancers.summary)),
+
+  # Promoter stuff
+  tar_target(promoters.counts, count_promoters_with_dmp(dmps.in.promoter.df)),
+  tar_target(promoters.summary, summarize_interactions_with_dmp(dmps.in.promoter.df)),
+  tar_target(dm.promoters.genes.df, summarize_dm_interaction_genes(promoters.summary)),
 
   tar_target(test.enhancer.enrichment,
              test_enrichment_for_dmps(pvals.gr,
                                       dmps.gr,
                                       enhancers.to.test,
                                       B=10000)),
-  tar_target(test.promoter.enrichment,
-             test_enrichment_for_dmps(pvals.gr,
-                                      dmps.gr,
-                                      promoters.to.test,
-                                      B=10000)),
+  # tar_target(test.promoter.enrichment,
+  #            test_enrichment_for_dmps(pvals.gr,
+  #                                     dmps.gr,
+  #                                     promoters.to.test,
+  #                                     B=10000)),
 
   tar_target(plot.enhancer.enrichment,
              plot_enhancer_enrichment_for_dmps(test.enhancer.enrichment,
                                                "_targets/figs/test-enhancer-enrichment.png"),
              format = "file"),
 
-  tar_target(plot.promoter.enrichment,
-             plot_enhancer_enrichment_for_dmps(test.promoter.enrichment,
-                                               "_targets/figs/test-promoter-enrichment.png"),
-             format = "file"),
-  tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff.exp.data, enhancers.with.dmp)),
-  tar_target(pchic.stats, get_summary_stats_pchic(enhancers.to.test, enhancers.with.dmp)),
-  tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/"))
+  # tar_target(plot.promoter.enrichment,
+  #            plot_enhancer_enrichment_for_dmps(test.promoter.enrichment,
+  #                                              "_targets/figs/test-promoter-enrichment.png"),
+  #            format = "file"),
+  tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff.exp.data, dmps.in.enhancer.df)),
+  # tar_target(pchic.stats, get_summary_stats_pchic(enhancers.to.test, dmps.in.enhancer.df)),
+  tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/")),
+  tar_target(gene.list.by.diff.meth.df,
+             curate_genes_by_dm_status(
+               dm.genes.df$gene_name,
+               dm.promoters.genes.df$gene.name,
+               dm.enhancers.genes.df$gene.name,
+               diff.exp.data$gene.name)
+             )
 )
 
 # Export UCSC -------------------------------------------------------------
@@ -297,6 +329,8 @@ ucsc_exports <- list(
 # Write out the data sets -------------------------------------------------
 
 supplemental_tables <- list(
+
+  tar_target(paper.stats, get_paper_stats(gene.body.enrichment, DMGENE.ALPHA)),
 
   # 1. DMPs (good)
   tar_target(table.s1.DMPs,
@@ -329,7 +363,7 @@ supplemental_tables <- list(
   # 4. Gene ontologies
   tar_target(table.s4.GeneOntologies,
              process_and_write_gene_ontology_terms(
-               DM.genes.go.df,
+               dm.genes.go.df,
                "Table S4: Gene Ontologies for DM Genes",
                "_targets/tables/supplemental/S4-DMGenes-GeneOntologies.xlsx"),
              format = "file"),
@@ -345,6 +379,10 @@ supplemental_tables <- list(
                enhancers.summary,
                "Table S6: Promoter-enhancer interactions with at least one DMP in enhancer",
                "_targets/tables/supplemental/S6-DMEnhancers.xlsx"),
+             format = "file"),
+
+  tar_target(table.GenesWithAnyDMFeatures,
+             my_write_csv(gene.list.by.diff.meth.df, "_targets/tables/supplemental/GenesWithAnyDMFeatures.csv"),
              format = "file")
 )
 

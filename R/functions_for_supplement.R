@@ -184,6 +184,9 @@ process_and_write_dmps <- function(dmps.gr, desc, file){
 
 process_and_write_DM_genes <- function(gene.body.enrichment, desc, file){
 
+  # if (filter_for_dmp_containing){
+  #   gene.body.enrichment <- gene.body.enrichment[gene.body.enrichment$N.DMPs > 0]
+  # }
 
   data <- gene.body.enrichment %>%
     transmute(
@@ -203,11 +206,11 @@ process_and_write_DM_genes <- function(gene.body.enrichment, desc, file){
 }
 
 #
-process_and_write_gene_ontology_terms <- function(DMGenes.go.df, desc, file){
+process_and_write_gene_ontology_terms <- function(dm.genes.go.df, desc, file){
 
   # First convert ENSEMBL IDs to genes...
-  data <- convert_gene_ontology_ids_to_symbols(DMGenes.go.df) %>%
-    transmute(`Gene Ontology (GO) Domain` = ONTOLOGY,
+  data <- dm.genes.go.df %>%
+    transmute(`Gene Ontology (GO) Domain` = Ontology,
               `GO Term ID` = ID,
               `GO Description` = Description,
               `Gene Symbols` = GeneSymbols,
@@ -289,7 +292,6 @@ process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, de
   return(file)
 
 }
-
 
 
 
@@ -436,5 +438,38 @@ plot_wgms_vs_array_hexbin <- function(wgms_vs_array.df){
     geom_hex(binwidth = c(0.01, 0.01), aes(fill = log(..density..))) +
     scale_fill_viridis(option = "plasma") +
     theme_classic()
+}
+
+
+
+
+# Combine combine combine -------------------------------------------------
+
+curate_genes_by_dm_status <- function(dm.genes,
+                                      dm.promoters.genes,
+                                      dm.enhancers.genes,
+                                      dex.genes){
+
+  uniq.genes <- union(
+      union(dm.genes, dex.genes),
+      union(dm.promoters.genes, dm.enhancers.genes)
+    )
+
+  out <- data.frame(gene.name = uniq.genes) %>%
+    dplyr::mutate(DM_Gene_Body = ifelse(gene.name %in% dm.genes, 1, 0),
+                  DM_Promoter = ifelse(gene.name %in% dm.promoters.genes, 1, 0),
+                  DM_Enhancer = ifelse(gene.name %in% dm.enhancers.genes, 1, 0),
+                  DE_Gene = ifelse(gene.name %in% dex.genes, 1, 0))
+
+  return(out)
+
+}
+
+
+
+get_paper_stats <- function(gene.body.enrichment, gene.lfdr){
+  N <- sum(gene.body.enrichment$N.DMPs > 0 & gene.body.enrichment$lfdr < gene.lfdr)
+
+  list("N genes with >0 DMPs + gene-wide lFDR < cutoff: " = N)
 }
 

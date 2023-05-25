@@ -78,15 +78,63 @@ to_ucsc_format <- function(a, b, c){
 to_ucsc_format_v <- Vectorize(to_ucsc_format)
 
 
-get_load_ids <- function(master.df, sample.ids){
-  intersect(master.df$sample_id[master.df$diagnostic_group == "LOAD"],
-            sample.ids)
+get_group_ids <- function(master.df, vv){
+  sort(unique(master.df$sample_id[master.df$diagnostic_group == vv]))
 }
 
 
-get_control_ids <- function(master.df, sample.ids){
-  intersect(master.df$sample_id[master.df$diagnostic_group == "CONTROL"],
-            sample.ids)
+
+
+munge_master_df <- function(master.full.df, sample.ids){
+  master.full.df %>%
+    dplyr::filter(sample_id %in% sample.ids) %>%
+    group_by(sample_id) %>%  # one sample shows up multiple times
+    dplyr::slice(1) %>%
+    ungroup() %>%
+    dplyr::mutate(APOE_risk_allele = (apoe_e1 == 4) + ( apoe_e2 == 4))
+}
+
+
+tabulate_and_test <- function(master.df, var, test.type = "chi"){
+  tb <- master.df %>%
+    dplyr::count(diagnostic_group, !!rlang::sym(var)) %>%
+    pivot_wider(names_from = "diagnostic_group", values_from = "n", values_fill = 0) %>%
+    drop_na() %>%
+    column_to_rownames(var)
+
+  if (test.type == "chi"){
+    test.result <- chisq.test(tb)
+  } else if (test.type == "fisher"){
+    test.result <- fisher.test(tb)
+  }
+
+  return(list("Table" = tb,
+              "Test" = test.result))
+}
+
+
+stringify_mean_sd <- function(xx){
+  paste0(round(mean(xx), 2), " (", round(sd(xx), 2), ")")
+}
+
+
+test_continuous <- function(master.df, var){
+
+  if (!(var %in% colnames(master.df))){
+    warning("Var not in master.df")
+  }
+
+  xx.control <- master.df %>%
+    dplyr::filter(diagnostic_group == "CONTROL") %>%
+    dplyr::pull(var) %>% as.numeric()
+
+  xx.load <- master.df %>%
+    dplyr::filter(diagnostic_group == "LOAD") %>%
+    dplyr::pull(var) %>% as.numeric()
+
+  list("Control: " = stringify_mean_sd(xx.control),
+       "LOAD: " = stringify_mean_sd(xx.load),
+       "Test: " = t.test(xx.control, xx.load))
 }
 
 
@@ -131,8 +179,11 @@ read_and_join_m_cov_routine <- function(dir, sample.ids, chunk.size){
 compute_empirical_p <- function(xx, test.value){
   positive.test.value <- abs(test.value)
 
-  mass <- sum(xx >= positive.test.value) + sum(xx <= -positive.test.value)
-  mass / length(xx)
+  p1 <- (xx >= test.value) / length(xx)
+  p2 <- (xx <= test.value) / length(xx)
+
+  p <- 2 * min(p1, p2)
+  return(p)
 }
 
 
@@ -468,7 +519,9 @@ symbols_to_gene_ontology_routine <- function(symbols){
   symbols_to_ids(symbols) %>%
     run_gene_ontology %>%
     go_output_to_df %>%
-    convert_gene_ontology_ids_to_symbols
+    convert_gene_ontology_ids_to_symbols %>%
+    tidyr::separate(GeneRatio, c("Count", "BGCount"), remove = F) %>%
+    dplyr::rename(Ontology = "ONTOLOGY")
 }
 
 
@@ -619,12 +672,6 @@ run_length_embed_dmps <- function(dmps.data, chr, dist){
 
   rle(diff(tmp$start) < dist)
 }
-
-# get_candidates_for_pyro <- function(dmps.data, dist, ){
-#   dmps.data %>%
-#     group_by(chr) %>%
-#     summarize(Runs = rle(diff(dmps.data$start) < dist))
-# }
 
 
 get_N_not_in_set <- function(dmps.gr, features.gr){

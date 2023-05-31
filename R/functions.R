@@ -83,6 +83,9 @@ get_group_ids <- function(master.df, vv){
 }
 
 
+# tally_dmps_not_in_gene <- function(dmps.gr, ){
+#
+# }
 
 
 munge_master_df <- function(master.full.df, sample.ids){
@@ -187,35 +190,9 @@ compute_empirical_p <- function(xx, test.value){
 }
 
 
-# General reading/casting functions -----------------------------------------------
-
-get_natgen_genes <- function(ifile, exclude_APP = T){
-  zz <- read_table(ifile, col_names = FALSE)$X1
-
-  if (exclude_APP){
-    zz[!(zz == "APP")]
-  } else {
-    zz
-  }
-}
 
 
-my_write_csv <- function(data, file){
-  write_csv(data, file = file)
-  return(file)
-}
 
-
-get_pvals_data <- function(ifile){
-  # READ pvals from
-  data.table::fread(ifile, verbose = F) %>%
-    dplyr::mutate(lfdr = lfdr.from.ss,
-                  pval = p.from.ss,
-                  pval.Wald = p.from.DSS,
-                  y = -log10(lfdr)) %>%
-    dplyr::select(-c(p.from.ss, p.from.zz, p.from.DSS,
-                     lfdr.from.ss, lfdr.from.zz))
-}
 
 
 
@@ -313,14 +290,17 @@ get_gene_bodies <- function(upstream, downstream, autosomes_only = T, protein_co
   autosome.ix <- as.vector(seqnames(genes) %in% 1:22)
 
   if (autosomes_only & protein_coding_only){
-    expand_genes(genes[protein.coding.ix & autosome.ix], upstream, downstream)
+    out <- expand_genes(genes[protein.coding.ix & autosome.ix], upstream, downstream)
   } else if (autosomes_only & !protein_coding_only){
-    expand_genes(genes[autosome.ix], upstream, downstream)
+    out <- expand_genes(genes[autosome.ix], upstream, downstream)
   } else if (!autosomes_only & protein_coding_only){
-    expand_genes(genes[protein.coding.ix], upstream, downstream)
+    out <- expand_genes(genes[protein.coding.ix], upstream, downstream)
   } else {
-    expand_genes(genes, upstream, downstream )
+    out <- expand_genes(genes, upstream, downstream )
   }
+
+  seqlevelsStyle(out) <- "NCBI"
+  out
 }
 
 ids_to_symbols <- function(vv){
@@ -531,7 +511,7 @@ get_ucsc_seqlengths <- function(){
   good.chr <- paste0("chr", 1:22)
 
   db <- get_ensdb()
-  seqlevelsStyle(db) <- "UCSC"
+  seqlevelsStyle(db) <- "NCBI"
 
   # Usually pings to say "[some weird scaffold] didn't map"
   suppressWarnings(seqlengths(db)[good.chr])
@@ -597,22 +577,19 @@ tally_dmps_in_genes <- function(genes.with.dmp){
     summarize(N.DMPs = n())
 }
 
-read_madrid_data <- function(file){
-  read_csv(file, show_col_types = F, skip = 1) %>%
-    dplyr::mutate(genes = str_split(`Gene Symbol(s)`, ";")) %>%
-    unnest(genes) %>%
-    drop_na()
+
+
+get_array_genes_with_nearby_dmp <- function(dmps.array.gr){
+  sort(unique(unlist(str_split(dmps.array.gr$gene.symbols, ";"))))
 }
 
+compare_with_madrid_paper <- function(dmps.array.gr, dm.genes.df){
+  array.genes <- get_array_genes_with_nearby_dmp(dmps.array.gr)
+  wgms.genes <- dm.genes.df$gene_name
 
-compare_with_madrid_paper <- function(DMGenes.data, madrid.data){
-  xx <- DMGenes.data$gene_name
-  yy <- unique(madrid.data$genes)
+  zz <- intersect(array.genes, wgms.genes)
 
-  zz <- intersect(xx, yy)
-
-  return(list("Number of shared genes:" = length(zz),
-              "Shared genes: " = zz))
+  return(zz)
 }
 
 
@@ -679,7 +656,23 @@ get_N_not_in_set <- function(dmps.gr, features.gr){
   seqlevelsStyle(features.gr) <- "NCBI"
 
   out <- subsetByOverlaps(x = dmps.gr, ranges = features.gr, invert = TRUE)
-  return(list("Number of DMPs not in features: " = length(out)))
+  return(length(out))
+}
+
+get_N_in_set <- function(dmps.gr, features.gr){
+  seqlevelsStyle(dmps.gr) <- "NCBI"
+  seqlevelsStyle(features.gr) <- "NCBI"
+
+  out <- subsetByOverlaps(x = dmps.gr, ranges = features.gr, invert = FALSE)
+  return(length(out))
+}
+
+
+tally_dmps_in_out_genes <- function(dmps.gr, features.gr){
+  return(list(
+    "N DMPs  in set:" = get_N_in_set(dmps.gr, features.gr),
+    "N DMPs NOT in set:" = get_N_not_in_set(dmps.gr, features.gr)
+  ))
 }
 
 #END

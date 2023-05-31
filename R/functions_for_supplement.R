@@ -448,18 +448,24 @@ plot_wgms_vs_array_hexbin <- function(wgms_vs_array.df){
 curate_genes_by_dm_status <- function(dm.genes,
                                       dm.promoters.genes,
                                       dm.enhancers.genes,
-                                      dex.genes){
+                                      dex.genes,
+                                      gwas.genes,
+                                      array.genes){
 
   uniq.genes <- union(
-      union(dm.genes, dex.genes),
-      union(dm.promoters.genes, dm.enhancers.genes)
+      union(union(dm.genes, dex.genes), array.genes),
+      union(union(dm.promoters.genes, dm.enhancers.genes), gwas.genes)
     )
 
-  out <- data.frame(gene.name = uniq.genes) %>%
-    dplyr::mutate(DM_Gene_Body = ifelse(gene.name %in% dm.genes, 1, 0),
-                  DM_Promoter = ifelse(gene.name %in% dm.promoters.genes, 1, 0),
-                  DM_Enhancer = ifelse(gene.name %in% dm.enhancers.genes, 1, 0),
-                  DE_Gene = ifelse(gene.name %in% dex.genes, 1, 0))
+  out <- data.frame(Gene_Symbol = uniq.genes) %>%
+    dplyr::mutate(DiffMeth_Gene_Body = ifelse(Gene_Symbol %in% dm.genes, 1, 0),
+                  DiffMeth_Promoter = ifelse(Gene_Symbol %in% dm.promoters.genes, 1, 0),
+                  DiffMeth_Enhancer = ifelse(Gene_Symbol %in% dm.enhancers.genes, 1, 0),
+                  DiffExp_Gene = ifelse(Gene_Symbol %in% dex.genes, 1, 0),
+                  NatGen_GWAS_Gene = ifelse(Gene_Symbol %in% gwas.genes, 1, 0),
+                  DiffMeth_EPICArray = ifelse(Gene_Symbol %in% array.genes, 1, 0)) %>%
+    dplyr::mutate(TotalInclusions = rowSums(across(where(is.numeric)), na.rm=TRUE)) %>%
+    dplyr::arrange(-TotalInclusions)
 
   return(out)
 

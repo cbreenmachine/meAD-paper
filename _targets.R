@@ -63,8 +63,11 @@ preliminaries <- list(
   tar_target(bmi.test, test_continuous(master.df, "bmi")),
   tar_target(education.test, test_continuous(master.df, "education")),
 
-  # tar_target(apoe.test, test_apoe_allele_frequencies(apoe.df)),
-  tar_target(madrid.data, read_madrid_data("./DataReference/madrid_cpgs_list.csv")),
+  # How many DMPs are shared with previously discovered DMPs?
+  tar_target(dmps.array.gr, read_and_cast_madrid_data("./DataReference/madrid_cpgs_list.csv")),
+  tar_target(wgms.sig.in.array.gr, subsetByOverlaps(pvals.gr, dmps.array.gr, minoverlap = 2)),
+  tar_target(array.gene.symbols, get_array_genes_with_nearby_dmp(dmps.array.gr)),
+  tar_target(wgms.vs.array.genes, compare_with_madrid_paper(dmps.array.gr, dm.genes.df)),
 
   # Integrate with EPIC array later
   tar_target(array.gr, read_850k_array("DataRaw/array.M.hg38.bed")),
@@ -86,7 +89,9 @@ preliminaries <- list(
   tar_target(autosomal.protein_coding.symbols, get_autosomoal_gene_universe(protein_coding = T)),
 
   ######## DEFINE CONSTANTS ###########
-  tar_target(natgen.symbols, get_natgen_genes("DataReference/NatureGenetics042022_AD_genes.txt")),
+  tar_target(natgen.symbols, get_natgen_genes("DataReference/NatureGenetics042022_AD_genes.txt",
+                                              exclude_APP = T,
+                                              exclude_IGH = T)),
   tar_target(diff.exp.data,
              clean_differentially_expressed_genes(
                "DataReference/DEGenes/2020-Shigemizu-AD-RNAseq-DEGenes.xlsx",
@@ -121,7 +126,8 @@ preliminaries <- list(
   tar_target(dmps.genic.sankey.plot,
              screenshot_sankey(plot_sankey(dmps.genic.df, nrow(dmps.data)),
                                "_targets/figs/dmps-genic-sankey.png"),
-             format="file")
+             format="file"),
+  tar_target(dmps.in.gene.stats, tally_dmps_in_out_genes(dmps.gr, gene.bodies))
 )
 
 # Array Comparison --------------------------------------------------------
@@ -219,12 +225,12 @@ diff_methylation <- list(
 
   tar_target(dm.genes.df, dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA,
                                         N.CpGs > 0)),
-  tar_target(madrid.comp,
-             compare_with_madrid_paper(
-               dm.genes.df,
-               madrid.data
-              )
-  ),
+  # tar_target(madrid.comp,
+  #            compare_with_madrid_paper(
+  #              dm.genes.df,
+  #              madrid.data
+  #             )
+  # ),
 
 
   tar_target(dm.genes.go.df, symbols_to_gene_ontology_routine(dm.genes.df$gene_name)),
@@ -306,7 +312,9 @@ pchic <- list(
                dm.genes.df$gene_name,
                dm.promoters.genes.df$gene.name,
                dm.enhancers.genes.df$gene.name,
-               diff.exp.data$gene.name)
+               diff.exp.data$gene.name,
+               natgen.symbols,
+               array.gene.symbols)
              )
 )
 

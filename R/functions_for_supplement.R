@@ -41,14 +41,14 @@ plot_pvals_routine <- function(pvals.data){
 
   # Run plotting (both coalculate lambda internally)
 
-  par(mfrow = c(1,2))
+  # par(mfrow = c(1,2))
   plot_qq_from_pvals(pp.1)
-  plot_hist_from_pvals(pp.2)
+  # plot_hist_from_pvals(pp.2)
 
 }
 
 run_and_save_pvals_plot <- function(pvals.data, file){
-  pdf(file, width = 9, height = 5)
+  pdf(file, width = 6, height = 6)
   plot_pvals_routine(pvals.data )
   dev.off()
 

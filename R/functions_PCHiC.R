@@ -297,7 +297,7 @@ summarize_counts_dm_interactions <- function(enhancers.with.dmp, promoters.with.
 summarize_dmp_counts_in_enhancers <- function(dmps.in.enhancer.df){
   dmps.in.enhancer.df %>%
     dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
-    group_by(oe.id, baitName) %>%
+    group_by(interaction.id, oe.id, baitName) %>%
     summarize(n.dmps = n_distinct(cpg.id))
 }
 
@@ -305,7 +305,7 @@ summarize_dmp_counts_in_enhancers <- function(dmps.in.enhancer.df){
 summarize_dmp_counts_in_promoters <- function(dmps.in.promoter.df){
   dmps.in.promoter.df %>%
     dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
-    group_by(bait.id) %>%
+    group_by(interaction.id, bait.id, baitName) %>%
     summarize(n.dmps = n_distinct(cpg.id))
 }
 

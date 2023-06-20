@@ -52,8 +52,6 @@ preliminaries <- list(
   tar_target(control.sample.ids, get_group_ids(master.df, "CONTROL")),
   tar_target(mci.sample.ids, get_group_ids(master.full.df, "MCI")),
 
-  # tar_target(apoe.df, get_apoe_allele_frequencies("DataRaw/masterSamplesheet.csv", sample.ids)),
-
   tar_target(ancestry.test, tabulate_and_test(master.df, "race_primary", "fisher")),
   tar_target(source.test, tabulate_and_test(master.df, "source", "chi")),
   tar_target(sex.test, tabulate_and_test(master.df, "sex", "chi")),
@@ -266,7 +264,7 @@ pchic <- list(
                dmps.in.enhancer.df,
                dmps.in.promoter.df)),
 
-  tar_target(dm.enhancer.promoter.summary, summarize_counts_dm_interactions(dmps.in.enhancer.df, dmps.in.promoter.df)),
+  tar_target(dm.interactions.summary, summarize_counts_dm_interactions(dmps.in.enhancer.df, dmps.in.promoter.df)),
 
   # Gene ontology for genes with DM promoters and DM enhancers
   tar_target(dm.enhancer.promoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),

@@ -33,13 +33,25 @@ tar_option_set(
                "htmlwidgets",
                "rjson",
                "openxlsx",
-               "chunkR"
+               "chunkR",
+               "minfi",
+               "IlluminaHumanMethylation450kanno.ilmn12.hg19",
+               "IlluminaHumanMethylationEPICanno.ilm10b4.hg19"
   ),
   format = "rds" # default storage format
 )
 
 
 # Replace the target list below with your own:
+
+
+# Preliminaries -----------------------------------------------------------
+
+# 1. Getting data lifted to hg38
+# 2. Performing quality controls
+# 3. Tests on demographic data
+# 4.
+
 preliminaries <- list(
 
   tar_target(sample.ids, get_sample_ids_from_dss_inputs(
@@ -66,12 +78,14 @@ preliminaries <- list(
   tar_target(wgms.sig.in.array.gr, subsetByOverlaps(pvals.gr, dmps.array.gr, minoverlap = 2)),
   tar_target(array.gene.symbols, get_array_genes_with_nearby_dmp(dmps.array.gr)),
   tar_target(wgms.vs.array.genes, compare_with_madrid_paper(dmps.array.gr, dm.genes.df)),
+  tar_target(wgms.vs.array.genes.csv,
+             my_write_csv(data.frame(shared_genes = wgms.vs.array.genes), "DataSummaries/2023-06-26-SharedGenesForKirk.csv")),
 
   # Integrate with EPIC array later
   tar_target(array.gr, read_850k_array("DataRaw/array.M.hg38.bed")),
   tar_target(common.ids, intersect(sort(colnames(mcols(array.gr))), sample.ids)),
 
-  # Missingness
+  # Missingness - takes too long to run
   # tar_target(missing.chr1.load.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", load.sample.ids, 20)),
   # tar_target(missing.chr1.control.df, read_and_join_m_cov_routine("DataRaw/2023-04-28-rawMCov/", control.sample.ids, 20)),
   #
@@ -132,14 +146,17 @@ preliminaries <- list(
 
 
 # Keep mapping sub-pipeline outside of the list
-raw_wgms_vs_array <- list(
-  tar_target(raw.chr1.wgms, join_raw_M_Cov_files("DataRaw/2023-04-28-raw-MCov-chr1/", common.ids)),
-  tar_target(raw.chr1.wgms.gr, makeGRangesFromDataFrame(raw.chr1.wgms,
-                                                        keep.extra.columns = T,
-                                                        starts.in.df.are.0based = T)),
-  tar_target(raw.chr1.merged, combine_850k_array_with_wgms(array.gr, raw.chr1.wgms.gr))
-)
+# raw_wgms_vs_array <- list(
+#   tar_target(raw.chr1.wgms, join_raw_M_Cov_files("DataRaw/2023-04-28-raw-MCov-chr1/", common.ids)),
+#   tar_target(raw.chr1.wgms.gr, makeGRangesFromDataFrame(raw.chr1.wgms,
+#                                                         keep.extra.columns = T,
+#                                                         starts.in.df.are.0based = T)),
+#   tar_target(raw.chr1.merged, combine_850k_array_with_wgms(array.gr, raw.chr1.wgms.gr))
+# )
 
+
+
+# WGMS vs Array Comparisons -----------------------------------------------
 
 wgms_vs_array <-
   tar_map(
@@ -150,14 +167,40 @@ wgms_vs_array <-
                  array.gr,
                  paste0("DataRaw/2023-05-17-MCov-imputed/", chr)
                )),
+
+    # Derived from merged
+    tar_target(mid,
+               dplyr::filter(merged,
+                             WGMS > 0.1, WGMS < 0.9,
+                             EPIC > 0.1, EPIC < 0.9)),
     tar_target(sampled, sample_frac(merged, 0.1)),
-    tar_target(stats, compute_wgms_vs_array_summary_stats(merged))
+    tar_target(merged_no_dmps, remove_dmps_from_merged(merged, dmps.gr)),
+
+    # Sampled estimates identical
+    tar_target(stats, compute_wgms_vs_array_summary_stats(merged)),
+    tar_target(stats_mid, compute_wgms_vs_array_summary_stats(mid)),
+    tar_target(stats_no_dmps, compute_wgms_vs_array_summary_stats(merged_no_dmps)),
+    tar_target(scatter, plot_tech_comp_scatter(merged))
 )
 
 
 wgms_vs_array_combined <- list(
   tar_combine(wgms_vs_array.df, wgms_vs_array[["sampled"]]),
-  tar_combine(wgms_vs_array.stats, wgms_vs_array[["stats"]])
+  tar_combine(wgms_vs_array.stats, wgms_vs_array[["stats"]]),
+  tar_combine(wgms_vs_array_mid.stats, wgms_vs_array[["stats_mid"]]),
+
+  tar_combine(wgms_vs_array_no_dmps.stats, wgms_vs_array[["stats_no_dmps"]]),
+  tar_target(N_loci_dropped,
+             count_number_of_loci_dropped(
+               wgms_vs_array.stats,
+               wgms_vs_array_no_dmps.stats)
+             )
+)
+
+
+wgms_vs_array_correlations <- list(
+  tar_target(mid.avg.cor, compute_average_correlation(wgms_vs_array_mid.stats)),
+  tar_target(avg.cor, compute_average_correlation(wgms_vs_array.stats))
 )
 
 
@@ -223,17 +266,9 @@ diff_methylation <- list(
 
   tar_target(dm.genes.df, dplyr::filter(gene.body.enrichment, lfdr < DMGENE.ALPHA,
                                         N.CpGs > 0)),
-  # tar_target(madrid.comp,
-  #            compare_with_madrid_paper(
-  #              dm.genes.df,
-  #              madrid.data
-  #             )
-  # ),
-
-
   tar_target(dm.genes.go.df, symbols_to_gene_ontology_routine(dm.genes.df$gene_name)),
 
-  tar_target(dm.genes.gene.ont.df,
+  tar_target(dm.genes.go.plot,
              cowplot::save_plot(plot_go_barchart(dm.genes.go.df, n = 25),
                                 filename = "_targets/figs/gene-ontology-DMGenes.png",
                                 base_height = 7, base_width = 14))
@@ -248,18 +283,54 @@ pchic <- list(
 
   tar_target(enhancers.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
   tar_target(baits.to.test, extract_promoters_from_interactions(enhancers.to.test)),
-  tar_target(promoters.to.test, subsetByOverlaps(baits.to.test, promoters)),
+
+  # Ensure that baits are nearby genes (SK advised against this)
+  # tar_target(promoters.to.test, subsetByOverlaps(baits.to.test, promoters)),
+  tar_target(promoters.to.test, baits.to.test),
 
   # Curate DMPs
-  # TODO: turn this into mapped target, lots of duplication
-  tar_target(dmps.in.enhancer.df, combine_dmps_with_interactions(dmps.gr, enhancers.to.test)),
-  tar_target(dmps.in.promoter.df, combine_dmps_with_interactions(dmps.gr, promoters.to.test)),
+  # TODO: turn this into mapped target, lots of duplication because enhancer and promoter
+  # stuff is paralleled
+  tar_target(dmps.in.enhancer.df, combine_dmps_with_intervals(dmps.gr, enhancers.to.test)),
+  tar_target(dmps.in.promoter.df, combine_dmps_with_intervals(dmps.gr, promoters.to.test)),
 
   # Mostly questions from RA May 22, 2023
-  tar_target(dmp.counts.in.enhancer.df, summarize_dmp_counts_in_enhancers(dmps.in.enhancer.df)),
-  tar_target(dmp.counts.in.promoter.df, summarize_dmp_counts_in_promoters(dmps.in.promoter.df)),
+  # Since more than one DMP can reside in an enhancer, we take the median effect size
+  # and tally the number of DMPs. This gives you one row per enhancer/promoter respectively.
+  tar_target(dmp.counts.in.enhancer.df, summarize_dmp_counts_in_pchic(dmps.in.enhancer.df, "oe.id", filter.zeros = T)),
+  tar_target(dmp.counts.in.promoter.df, summarize_dmp_counts_in_pchic(dmps.in.promoter.df, "bait.id", filter.zeros = T)),
 
-  tar_target(shared.gene.symbols,
+  # Extract Genes with DM enhancers, Genes with DM Promoters.
+  tar_target(genes.w.dm.enhancers, get_unique_genes_from_baitName_col(dmp.counts.in.enhancer.df)),
+  tar_target(genes.w.dm.promoters, get_unique_genes_from_baitName_col(dmp.counts.in.promoter.df)),
+
+  tar_target(pchic.summary.stats,
+             tabulate_pchic_findings(
+               enhancers.to.test,
+               baits.to.test,
+               dmp.counts.in.enhancer.df,
+               dmp.counts.in.promoter.df,
+               genes.w.dm.enhancers,
+               genes.w.dm.promoters
+             )),
+  tar_target(pchic.summary.stats.csv,
+             my_write_csv(pchic.summary.stats, "_targets/tables/supplemental/PCHiC-integration-counts.csv"),
+             format = "file"),
+
+  # Now re-combine by interaction, integrate diff expression and GWAS by adding columns indicating
+  # whether baitNames overlap with those respective sets
+  tar_target(dmp.enhancer.promoter.integrated, combine_enhancer_promoter_gwas_diff_exp(
+    dmp.counts.in.enhancer.df,
+    dmp.counts.in.promoter.df,
+    natgen.symbols,
+    diff.exp.data$gene.name
+  )),
+
+
+
+
+
+  tar_target(genes.with.dm.enhancer.and.dm.promoter,
              get_common_genes_from_DM_interactions(
                dmps.in.enhancer.df,
                dmps.in.promoter.df)),
@@ -267,7 +338,7 @@ pchic <- list(
   tar_target(dm.interactions.summary, summarize_counts_dm_interactions(dmps.in.enhancer.df, dmps.in.promoter.df)),
 
   # Gene ontology for genes with DM promoters and DM enhancers
-  tar_target(dm.enhancer.promoter.gene.ont.df, symbols_to_gene_ontology_routine(shared.gene.symbols)),
+  tar_target(dm.enhancer.promoter.gene.ont.df, symbols_to_gene_ontology_routine(genes.with.dm.enhancer.and.dm.promoter)),
 
   tar_target(enhancers.counts, count_enhancers_with_dmp(dmps.in.enhancer.df)),
   tar_target(enhancers.natgen.counts,
@@ -282,26 +353,24 @@ pchic <- list(
   tar_target(promoters.summary, summarize_interactions_with_dmp(dmps.in.promoter.df)),
   tar_target(dm.promoters.genes.df, summarize_dm_interaction_genes(promoters.summary)),
 
+  # Summary stats (updated June 20, 2023)
+  # To remedy some confusion with DM enhancers vs interactions with DM enhancers
   tar_target(test.enhancer.enrichment,
              test_enrichment_for_dmps(pvals.gr,
                                       dmps.gr,
                                       enhancers.to.test,
                                       B=10000)),
-  # tar_target(test.promoter.enrichment,
-  #            test_enrichment_for_dmps(pvals.gr,
-  #                                     dmps.gr,
-  #                                     promoters.to.test,
-  #                                     B=10000)),
+  tar_target(test.promoter.enrichment,
+             test_enrichment_for_dmps(pvals.gr,
+                                      dmps.gr,
+                                      promoters.to.test,
+                                      B=10000)),
 
   tar_target(plot.enhancer.enrichment,
              plot_enhancer_enrichment_for_dmps(test.enhancer.enrichment,
                                                "_targets/figs/test-enhancer-enrichment.png"),
              format = "file"),
 
-  # tar_target(plot.promoter.enrichment,
-  #            plot_enhancer_enrichment_for_dmps(test.promoter.enrichment,
-  #                                              "_targets/figs/test-promoter-enrichment.png"),
-  #            format = "file"),
   tar_target(DE.vs.DME.test, test_ranks_of_pchic_rnaseq(diff.exp.data, dmps.in.enhancer.df)),
   # tar_target(pchic.stats, get_summary_stats_pchic(enhancers.to.test, dmps.in.enhancer.df)),
   tar_target(reads.stats, get_all_stats_from_dir("DataSummaries/QCReports/")),
@@ -351,6 +420,8 @@ supplemental_tables <- list(
              process_and_write_nature_genetics_list(
                NG.tally.df,
                natgen.symbols,
+               genes.w.dm.enhancers,
+               genes.w.dm.promoters,
                "Table S2: List of 75 previously identified genetics risk loci with number of DMPs (if any) within 25,000 nucleotides of gene start/stop",
                "_targets/tables/supplemental/S2-ADRiskLociNumberOfDMPs.xlsx"
              ),
@@ -377,14 +448,16 @@ supplemental_tables <- list(
   tar_target(table.s5.DMPromoters,
              format_and_write_dm_promoters(
                promoters.summary,
+               diff.exp.data$gene.name,
                "Table S5: Promoter-enhancer interactions with at least one DMP in promoter",
-               "_targets/tables/supplemental/S5-DMPromoters.xlsx"),
+               "_targets/tables/supplemental/S5-InteractionsWithDMPromoters.xlsx"),
              format = "file"),
   tar_target(table.s6.DMEnhancers,
              format_and_write_dm_enhancers(
                enhancers.summary,
+               diff.exp.data$gene.name,
                "Table S6: Promoter-enhancer interactions with at least one DMP in enhancer",
-               "_targets/tables/supplemental/S6-DMEnhancers.xlsx"),
+               "_targets/tables/supplemental/S6-InteractionWithDMEnhancers.xlsx"),
              format = "file"),
 
   tar_target(table.GenesWithAnyDMFeatures,
@@ -392,14 +465,58 @@ supplemental_tables <- list(
              format = "file")
 )
 
+# How many DMPs are on each of the commonly used Illumina arrays?
+tallies_from_array_techs <- list(
+  tar_target(array.450.hg38, load_and_lift_450k(chain.19to38)),
+  tar_target(array.EPIC.hg38, load_and_lift_EPIC(chain.19to38)),
+
+  #
+  tar_target(array.450.cpgs, subsetByOverlaps(pvals.gr, array.450.hg38)),
+  tar_target(array.EPIC.cpgs, subsetByOverlaps(pvals.gr, array.EPIC.hg38)),
+
+  #
+  tar_target(array.450.dmps, subsetByOverlaps(dmps.gr, array.450.hg38)),
+  tar_target(array.EPIC.dmps, subsetByOverlaps(dmps.gr, array.EPIC.hg38))
+)
 
 
-list(preliminaries,
-     raw_wgms_vs_array,
-     wgms_vs_array,
-     wgms_vs_array_combined,
-     diff_methylation,
-     pchic,
-     sequencing_quality,
-     supplemental_tables)
+
+revisions <- list(
+  # meQTL Comparison
+  tar_target(assoc.df, read_GODMC_meQTLs("DataReference/GODMC-mQTL/assoc_meta_all.csv")),
+  tar_target(godmc.hg19.gr, filter_450k_annotation(assoc.df$cpg)),
+  tar_target(godmc.hg38.gr, unlist(rtracklayer::liftOver(godmc.hg19.gr, chain.19to38))),
+  tar_target(dmp.and.mqtl, subsetByOverlaps(dmps.gr, godmc.hg38.gr)),
+
+  tar_target(dmp.godmc.table,
+             make_godmc_dmp_table(
+               dmp.and.mqtl,
+               array.450.dmps,
+               godmc.hg38.gr,
+               array.450.hg38)
+             ),
+
+  # Other Study's DMPs comparison
+  tar_target(rou.dmps.hg19, read_roubroeks_data("DataReference/2020-Roubroeks/anova-dmps.xlsx")),
+  tar_target(rou.dmps.hg38, unlist(rtracklayer::liftOver(rou.dmps.hg19, chain.19to38))),
+  tar_target(rou.common.dmps, subsetByOverlaps(dmps.gr, rou.dmps.hg38)),
+
+  # How many DMPs go to more than one gene
+  tar_target(N.genes.per.dmp, count_n_dmps_multi_map_to_gene(dmps.gr, gene.bodies))
+)
+
+
+list(
+  preliminaries,
+   # raw_wgms_vs_array,
+   wgms_vs_array,
+   wgms_vs_array_combined,
+    wgms_vs_array_correlations,
+   diff_methylation,
+   pchic,
+   sequencing_quality,
+   supplemental_tables,
+   revisions,
+   tallies_from_array_techs
+  )
 

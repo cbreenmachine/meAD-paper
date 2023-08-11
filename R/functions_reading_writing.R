@@ -50,3 +50,47 @@ read_and_cast_madrid_data <- function(file){
                              seqnames.field = "chr")
 }
 
+
+read_roubroeks_data <- function(ifile){
+  readxl::read_xlsx(ifile, sheet = 1, skip = 5, col_names = F) %>%
+    dplyr::select(c(1, 2, 7, 8)) %>%
+    dplyr::rename("cpg" = 1, "locus" = 2, "difference" = 3, "tukey.p" = 4) %>%
+    tidyr::separate(locus, into = c("chrom", "start"), sep = ": ") %>%
+    dplyr::mutate(chrom = str_remove(chrom, " "),
+                  start = as.numeric(start),
+                  end = start + 2) %>%
+    dplyr::filter(tukey.p < 0.01) %>%
+    makeGRangesFromDataFrame(keep.extra.columns = T)
+}
+
+
+lift_manifest <- function(manifest, chain){
+  # Load the manifest file and get it in the right format
+  anno <- as.data.frame(getAnnotation(manifest))
+
+  # Filter and add start/end
+  zz <- anno %>%
+    dplyr::mutate(start = pos-1, end = pos+1) %>%
+    makeGRangesFromDataFrame(starts.in.df.are.0based = T)
+
+  # Finally, get to the right coordinate system
+  unlist(rtracklayer::liftOver(zz, chain))
+}
+
+
+load_and_lift_450k <- function(chain){
+  manifest <- IlluminaHumanMethylation450kanno.ilmn12.hg19
+  lift_manifest(manifest, chain)
+}
+
+
+load_and_lift_EPIC <- function(chain){
+  manifest <- IlluminaHumanMethylationEPICanno.ilm10b4.hg19
+  lift_manifest(manifest,chain)
+}
+
+
+filter_450k_annotation <- function(valid.cpgs){
+
+
+}

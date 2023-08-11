@@ -18,8 +18,6 @@ plot_hist_from_pvals <- function(pp){
        breaks = 50,
        main = as.expression(ti),
        xlab = expression(p))
-
-
 }
 
 
@@ -151,148 +149,7 @@ get_all_stats_from_dir <- function(dir){
            MappingPercentage = TotalMappedReads / TotalReads)
 }
 
-
-
-
-# Demographics table ------------------------------------------------------
-
-
-
-
 # Write supplementary tables ----------------------------------------------
-
-
-process_and_write_dmps <- function(dmps.gr, desc, file){
-
-  data <- dmps.gr %>%
-    as.data.frame() %>%
-    dplyr::transmute(
-                  Chromosome = seqnames,
-                  "Start Coordinate (hg38)" = start,
-                  `End Coordinate (hg38)` = end,
-                  `Estimated Methylation Difference (AD minus no-AD)` = pi.diff,
-                  `Local False-Discovery Rate (lFDR)` = lfdr)
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-
-  return(file)
-}
-
-
-process_and_write_DM_genes <- function(gene.body.enrichment, desc, file){
-
-  # if (filter_for_dmp_containing){
-  #   gene.body.enrichment <- gene.body.enrichment[gene.body.enrichment$N.DMPs > 0]
-  # }
-
-  data <- gene.body.enrichment %>%
-    transmute(
-      `Gene Symbol` = gene_name,
-      `Total Number of CpGs` = N.CpGs,
-      `Number of Differentially Methylated Positions (DMPs)` = N.DMPs,
-      `Harmonic Mean p-value` = HarmonicMeanPval,
-      `Local False-Discovery Rate (lFDR)` = lfdr,
-    )
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-
-  return(file)
-}
-
-#
-process_and_write_gene_ontology_terms <- function(dm.genes.go.df, desc, file){
-
-  # First convert ENSEMBL IDs to genes...
-  data <- dm.genes.go.df %>%
-    transmute(`Gene Ontology (GO) Domain` = Ontology,
-              `GO Term ID` = ID,
-              `GO Description` = Description,
-              `Gene Symbols` = GeneSymbols,
-              `Gene Ratio` = GeneRatio,
-              `BG Ratio` = BgRatio,
-              `Local False-Discovery Rate (lFDR)` = p.adjust)
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-
-  return(file)
-}
-
-
-format_and_write_dm_enhancers <- function(interactions.summary, desc, file){
-
-  data <- unnest_interactions_by_gene(interactions.summary) %>%
-    dplyr::arrange(desc(k.dmps), gene.name) %>%
-    transmute(
-      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
-      `Gene Symbol` = gene.name,
-      `Promoter Locus (hg38)` = paste0(baitChr, ":", baitStart, "-", baitEnd),
-      `Enhancer Locus (hg38)` = paste0("chr", oe.id)) %>%
-    distinct() %>%
-    arrange()
-
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-  return(file)
-}
-
-
-format_and_write_dm_promoters <- function(promoters.summary, desc, file){
-
-  data <- unnest_interactions_by_gene(promoters.summary) %>%
-    dplyr::arrange(desc(k.dmps), gene.name) %>%
-    transmute(
-      `Number of Differentially Methylated Positions (DMPs)` = k.dmps,
-      `Gene Symbol` = gene.name,
-      `Promoter Locus (hg38)` = bait.id,
-      `Enhancer Locus (hg38)` = paste0("chr", oeChr, ":", oeStart, "-", oeEnd)) %>%
-    distinct()
-
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-  return(file)
-}
-
-
-
-process_and_write_nature_genetics_list <- function(NG.tally.df, natgen.genes, desc,  file){
-
-
-  # Need to expand current dataset
-  genes.zero.dmps <- setdiff(natgen.genes, NG.tally.df$symbol)
-  tmp <- data.frame(genes.zero.dmps, 0)
-  colnames(tmp) <- colnames(NG.tally.df)
-
-  # COmbine non-zero with zero counts
-  data <- rbind(NG.tally.df, tmp) %>%
-    dplyr::filter(!str_detect(symbol, "IGH")) %>%
-    arrange(-N.DMPs)
-
-  colnames(data) <- c("AD Genomic Risk Locus Symbol", "Number Of Differentially Methylated Positions (DMPs) Within 25kb")
-
-  wb <- create_wb_with_description(desc)
-  wb <- append_data_to_workbook(wb, data)
-
-  openxlsx::saveWorkbook(wb, file, overwrite = T)
-
-  return(file)
-
-}
-
 
 
 # Array comparisons -------------------------------------------------------
@@ -421,12 +278,51 @@ merge_array_and_wgms_routine <- function(array.gr, dir){
 
 }
 
+
+remove_dmps_from_merged <- function(merged, dmps.gr){
+
+  # merged is a data frame with columns seqnames, start, WGMS, EPIC
+  # dmps.gr is a genomic ranges
+
+
+  zz <- makeGRangesFromDataFrame(
+    dplyr::mutate(merged, end = start + 2),
+    keep.extra.columns = TRUE
+    )
+
+  subsetByOverlaps(zz, dmps.gr, invert=TRUE, minoverlap = 2) %>%
+    as.data.frame()
+
+}
+
+
+count_number_of_loci_dropped <- function(with_dmps, wo_dmps){
+  tmp <- with_dmps %>%
+    group_by(seqnames) %>%
+    summarize(N = mean(parameter))
+  N0 <- sum(tmp$N)
+
+  tmp <- wo_dmps %>%
+    group_by(seqnames) %>%
+    summarize(N = mean(parameter))
+  N1 <- sum(tmp$N)
+
+  return(N1 - N0)
+
+}
+
 compute_wgms_vs_array_summary_stats <- function(chr_merged){
 
-  out <- data.frame(chr = chr_merged$seqnames[1],
-                    rho = cor(chr_merged$WGMS, chr_merged$EPIC, use = "pairwise"),
-                    N.loci = length(unique(chr_merged$start)))
-  return(out)
+  res1 <- chr_merged %>%
+    group_by(seqnames, sample) %>%
+    do(broom::tidy(cor.test(.$WGMS, .$EPIC, use = "pairwise")))
+
+  # res2 <- chr_merged %>%
+  #   group_by(seqnames, sample) %>%
+  #   do(broom::tidy(cor.test(z$WGMS, z$EPIC, use = "pairwise")))
+
+  return(res1)
+  # return(rbind(res1, res2))
 }
 
 

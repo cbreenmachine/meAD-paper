@@ -179,7 +179,7 @@ plot_enhancer_enrichment_for_dmps <- function(enrichment.result, file) {
 
 
 
-combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
+combine_dmps_with_intervals <- function(dmps.gr, interactions.gr){
   # Overlap DMPs and interactions, and return a data frame.
   # There will be one row for each dmp by interaction (so some duplication if an enhancer
   # is overlapped by multiple DMPs)
@@ -191,23 +191,10 @@ combine_dmps_with_interactions <- function(dmps.gr, interactions.gr){
     ungroup()
 }
 
-# get_unique_genes_from_interactions <- function(interactions, protein_coding = F) {
-#   tmp <- unnest_interactions(interactions)
-#
-#   out <- sort(unique(tmp$baitNameSplit))
-#
-#   if (protein_coding) {
-#
-#     genes <- genes(get_ensdb())
-#     filter.symbols <- genes$gene_name[genes$gene_biotype == "protein_coding"]
-#
-#     out[out %in% filter.symbols]
-#   } else {
-#     out
-#   }
-# }
 
-
+get_unique_genes_from_baitName_col <- function(interactions.data){
+  sort(unique(unlist(str_split(interactions.data$baitName, ";"))))
+}
 
 summarize_interactions_with_dmp <- function(interactions.with.dmps) {
   interactions.with.dmps %>%
@@ -294,27 +281,102 @@ summarize_counts_dm_interactions <- function(enhancers.with.dmp, promoters.with.
 }
 
 
-summarize_dmp_counts_in_enhancers <- function(dmps.in.enhancer.df){
-  dmps.in.enhancer.df %>%
-    dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
-    group_by(interaction.id, oe.id, baitName) %>%
-    summarize(n.dmps = n_distinct(cpg.id))
+intersect_semicolon_wrapper <- function(xx, yy){
+
+  xx.split <- unlist(str_split(xx, ";"))
+
+  out <- intersect(xx.split, yy)
+
+  if (length(out) == 0){
+    return("None")
+  } else {
+    paste0(out, collapse = ";")
+  }
 }
 
 
-summarize_dmp_counts_in_promoters <- function(dmps.in.promoter.df){
-  dmps.in.promoter.df %>%
-    dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
-    group_by(interaction.id, bait.id, baitName) %>%
-    summarize(n.dmps = n_distinct(cpg.id))
+combine_enhancer_promoter_gwas_diff_exp <- function(
+    dmp.counts.in.enhancer.df,
+    dmp.counts.in.promoter.df,
+    gwas.genes,
+    diff.exp.genes){
+
+  full_join(dmp.counts.in.enhancer.df,
+            dmp.counts.in.promoter.df,
+            by = c("interaction.id", "bait.id", "oe.id", "baitName")) %>%
+    replace_na(list(n.dmps.x = 0, n.dmps.y = 0)) %>%
+    dplyr::mutate(RiskGenes = intersect_semicolon_wrapper(baitName, gwas.genes),
+                  DiffExpGenes = intersect_semicolon_wrapper(baitName, diff.exp.genes)) %>%
+    dplyr::rename(EnhancerLocus = oe.id,
+                  PromoterLocus = bait.id,
+                  BaitName = baitName,
+                  NumDMPsInEnhancer = n.dmps.x,
+                  NumDMPsInPromoter = n.dmps.y,
+                  )
 }
 
 
+summarize_dmp_counts_in_pchic <- function(dmps.in.promoter.df, feature.name, filter.zeros){
+
+if (!(feature.name %in% c("oe.id", "bait.id"))){
+  stop("Invalid fature.name in summarize_dmp_counts")
+}
+
+  out <- dmps.in.promoter.df %>%
+    dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%
+    group_by(interaction.id,
+             oe.id,
+             bait.id,
+             baitName) %>%
+    summarize(n.dmps = n_distinct(cpg.id))
+
+  if (!filter.zeros){
+    out
+  } else {
+    dplyr::filter(out, n.dmps > 0)
+  }
+}
+
+tabulate_pchic_findings <- function(
+    enhancers.to.test,
+    baits.to.test,
+    dmp.counts.in.enhancer.df,
+    dmp.counts.in.promoter.df,
+    genes.w.dm.enhancers,
+    genes.w.dm.promoters
+    ){
+
+  N.row <- 10
+  df <- data.frame(description = rep(NA, N.row), count = rep(NA, N.row))
+
+  # Number of interactions and whatnot tested
+  df[1, ] <- c("Interactions included in analysis", n_distinct(enhancers.to.test$interaction.id))
+  df[2, ] <- c("Enhancers included in analysis", n_distinct(enhancers.to.test$oe.id))
+  df[3, ] <- c("Promoters included in analysis", n_distinct(baits.to.test$bait.id))
 
 
+  # First, the counts of enhancers
+  df[4, ] <- c("Interactions w/ DM enhancer (1+ DMP)",
+             n_distinct(dmp.counts.in.enhancer.df$interaction.id))
+  df[5, ] <- c("Unique enhancers w/ 1+ DMP",
+               n_distinct(dmp.counts.in.enhancer.df$oe.id))
 
-# dmps.in.enhancer.df %>% dplyr::mutate(cpg.id = paste0(chr, ":", start)) %>%  group_by(cpg.id)
+  # Then the promoters
+  df[6, ] <- c("Interactions w/ DM promoter (1+ DMP)",
+               n_distinct(dmp.counts.in.promoter.df$interaction.id))
+  df[7, ] <- c("Unique promoters w/ 1+ DMP",
+               n_distinct(dmp.counts.in.promoter.df$bait.id))
 
+  # Now the genes
+  df[8, ] <- c("Genes with 1+ DMP in 1+ enhancer", n_distinct(genes.w.dm.enhancers))
+  df[9, ] <- c("Genes with 1+ DMP in 1+ promoter", n_distinct(genes.w.dm.promoters))
+
+  df[10, ] <- c("Genes w/ 1+ DMP in both enhancer and promoter",
+                length(intersect(genes.w.dm.enhancers, genes.w.dm.promoters)))
+
+  return(df)
+
+}
 
 
 

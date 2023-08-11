@@ -83,11 +83,6 @@ get_group_ids <- function(master.df, vv){
 }
 
 
-# tally_dmps_not_in_gene <- function(dmps.gr, ){
-#
-# }
-
-
 munge_master_df <- function(master.full.df, sample.ids){
   master.full.df %>%
     dplyr::filter(sample_id %in% sample.ids) %>%
@@ -445,8 +440,9 @@ plot_go_barchart <- function(go.df, n=25){
 
   # Get top 25 by p-value, then arrang by gene set size
   subdata <- head(dplyr::arrange(go.df, p.adjust), n) %>%
-    arrange(-p.adjust)
-    # arrange(Count)
+    dplyr::arrange(-p.adjust) %>%
+    dplyr::mutate(Count = as.numeric(Count))
+
   subdata$Description <- factor(subdata$Description, levels = subdata$Description)
 
   ggplot(data = subdata,
@@ -457,7 +453,6 @@ plot_go_barchart <- function(go.df, n=25){
     coord_flip() +
     theme_meAD() +
     xlab("") +
-    # ylab(expression(-log[10](lFDR))) +
     ylab("Number of genes") +
     labs(legend = "") +
     theme(legend.position = "top",

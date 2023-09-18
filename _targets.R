@@ -20,6 +20,7 @@ tar_option_set(
                "data.table",
                "viridis",
                "GenomicRanges",
+               "gridExtra",
                "cowplot",
                "annotatr",
                "waffle",
@@ -505,18 +506,23 @@ revisions <- list(
   tar_target(N.genes.per.dmp, count_n_dmps_multi_map_to_gene(dmps.gr, gene.bodies))
 )
 
+reports <- list(
+  tar_render(report_post_fdr_stats, "2023-08-24-fdrtool-genomic-control.Rmd")
+)
+
 
 list(
   preliminaries,
-   # raw_wgms_vs_array,
-   wgms_vs_array,
-   wgms_vs_array_combined,
-    wgms_vs_array_correlations,
-   diff_methylation,
-   pchic,
-   sequencing_quality,
-   supplemental_tables,
-   revisions,
-   tallies_from_array_techs
+  # raw_wgms_vs_array,
+  wgms_vs_array,
+  wgms_vs_array_combined,
+  wgms_vs_array_correlations,
+  diff_methylation,
+  pchic,
+  sequencing_quality,
+  supplemental_tables,
+  revisions,
+  tallies_from_array_techs,
+  reports
   )
 

@@ -3,6 +3,10 @@ compute_lambda_gc <- function(pp){
   round(median(qchisq(1 - pp, 1)) / qchisq(0.5, 1), 1)
 }
 
+# compute_lambda_robust <- function(x_vec){
+#   (median(x_vec) / 0.675) ^ 2
+# }
+
 
 make_title_for_pvals_plots <- function(desc, lambda.gc){
   bquote(.(desc)~~"("*lambda[GC]==.(lambda.gc)*")")

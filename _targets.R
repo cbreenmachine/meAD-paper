@@ -6,11 +6,11 @@ tar_source(files = "R")
 
 # Some constants
 DATA.REFERENCE.DIR <- "./DataReference/"
-DATA.IDIR <- "DataRaw/2023-02-14-Summaries-v6/"
+DATA.IDIR <- "DataRaw/2023-09-26-Summaries-corrected//"
 
 # lFDR Cutoff
 ALPHA <- 0.05
-DMGENE.ALPHA <- 0.01
+DMGENE.ALPHA <- 0.05
 
 # Set target options:
 tar_option_set(
@@ -79,8 +79,8 @@ preliminaries <- list(
   tar_target(wgms.sig.in.array.gr, subsetByOverlaps(pvals.gr, dmps.array.gr, minoverlap = 2)),
   tar_target(array.gene.symbols, get_array_genes_with_nearby_dmp(dmps.array.gr)),
   tar_target(wgms.vs.array.genes, compare_with_madrid_paper(dmps.array.gr, dm.genes.df)),
-  tar_target(wgms.vs.array.genes.csv,
-             my_write_csv(data.frame(shared_genes = wgms.vs.array.genes), "DataSummaries/2023-06-26-SharedGenesForKirk.csv")),
+  # tar_target(wgms.vs.array.genes.csv,
+  #            my_write_csv(data.frame(shared_genes = wgms.vs.array.genes), "DataSummaries/2023-06-26-SharedGenesForKirk.csv")),
 
   # Integrate with EPIC array later
   tar_target(array.gr, read_850k_array("DataRaw/array.M.hg38.bed")),
@@ -285,8 +285,6 @@ pchic <- list(
   tar_target(enhancers.to.test, interactions.hg38[interactions.hg38$med.chicago > 5]),
   tar_target(baits.to.test, extract_promoters_from_interactions(enhancers.to.test)),
 
-  # Ensure that baits are nearby genes (SK advised against this)
-  # tar_target(promoters.to.test, subsetByOverlaps(baits.to.test, promoters)),
   tar_target(promoters.to.test, baits.to.test),
 
   # Curate DMPs
@@ -326,10 +324,6 @@ pchic <- list(
     natgen.symbols,
     diff.exp.data$gene.name
   )),
-
-
-
-
 
   tar_target(genes.with.dm.enhancer.and.dm.promoter,
              get_common_genes_from_DM_interactions(
@@ -390,7 +384,10 @@ pchic <- list(
 
 ucsc_exports <- list(
   tar_target(interactions.for.ucsc,
-             export_significant_interactions_to_UCSC(enhancers.with.dmp)),
+             export_significant_interactions_to_UCSC(dmps.in.enhancer.df)),
+  tar_target(b4galt1.interactions,
+             format_subset_of_interactions(interactions.for.ucsc,
+                                           "_targets/ucsc/b4galt1.txt")),
   tar_target(interactions.for.ucsc.bed,
              format_and_write_ucsc_interactions(
                interactions.for.ucsc,
@@ -503,12 +500,15 @@ revisions <- list(
   tar_target(rou.common.dmps, subsetByOverlaps(dmps.gr, rou.dmps.hg38)),
 
   # How many DMPs go to more than one gene
-  tar_target(N.genes.per.dmp, count_n_dmps_multi_map_to_gene(dmps.gr, gene.bodies))
+  tar_target(N.genes.per.dmp, count_n_dmps_multi_map_to_gene(dmps.gr, gene.bodies)),
+  tar_target(dmps_with_genes, add_gene_annotations_to_dmps(dmps.gr))
 )
 
-reports <- list(
-  tar_render(report_post_fdr_stats, "2023-08-24-fdrtool-genomic-control.Rmd")
-)
+# write_csv(dmps_with_genes, "DataSummaries/2023-10-26-DMPsWithGeneAnnotations-forReid.csv")
+
+# reports <- list(
+#   tar_render(report_post_fdr_stats, "2023-08-24-fdrtool-genomic-control.Rmd")
+# )
 
 
 list(
@@ -523,6 +523,6 @@ list(
   supplemental_tables,
   revisions,
   tallies_from_array_techs,
-  reports
-  )
+  ucsc_exports
+)
 

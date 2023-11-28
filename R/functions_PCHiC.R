@@ -1,16 +1,5 @@
 
 
-ucsc.order.cols <- c("chrom", "chromStart", "chromEnd",
-                     "name", "score", "value", "exp", "color",
-                     "sourceChrom", "sourceStart", "sourceEnd", "sourceName", "sourceStrand",
-                     "targetChrom", "targetStart", "targetEnd", "targetName", "targetStrand")
-
-# unnest_interactions <- function(interactions.gr){
-#   interactions.gr %>%
-#     dplyr::mutate(gene.name = str_split(baitName, ";")) %>%
-#     tidyr::unnest(gene.name)
-# }
-
 
 clean_interactions_data <- function(file){
   # Read as text file
@@ -150,31 +139,6 @@ test_enrichment_for_dmps <- function(null.space.gr, dmps.gr, features.gr, B=1000
   }
   return(list("simulated.df" = data.frame(N.enhancers, N.dmps),
               "test.stat" = count_unique_overlaps(dmps.gr, features.gr)))
-}
-
-plot_enhancer_enrichment_for_dmps <- function(enrichment.result, file) {
-  xx <- enrichment.result$simulated.df$N.dmps
-  test.value <- enrichment.result$test.stat$N.dmps
-  pval <- compute_empirical_p(xx, test.value)
-
-  # Clean up
-  if (pval == 0){
-    pval.str <- "< 0.001"
-  } else {
-    pval.str <- round(pval, digits = 2)
-  }
-
-  z <- enrichment.result$simulated.df %>%
-    ggplot(aes(x = N.dmps, y = after_stat(density))) +
-    geom_histogram(bins = 25) +
-    theme_minimal() +
-    geom_vline(xintercept = enrichment.result$test.stat$N.dmps, color = "red") +
-    xlab("Number of unique DMPs residing in feature") +
-    ylab("Density") +
-    labs(caption = paste0("Two-sided p-value: ", pval.str)) +
-    theme(plot.background = element_rect(fill = "white", color = "white"))
-
-  cowplot::save_plot(filename = file, z)
 }
 
 
@@ -433,61 +397,6 @@ extract_promoters_from_interactions <- function(interactions){
 
 
 # Export interactions ---------------------------------------------------------
-
-export_significant_interactions_to_UCSC <- function(interactions.with.dmp){
-
-  interactions.with.dmp %>%
-    separate(oe.id, into = c("oeChr", "oeStart", "oeEnd")) %>%
-    dplyr::transmute(sourceChrom = oeChr,
-                     sourceStart = as.numeric(oeStart),
-                     sourceEnd = as.numeric(oeEnd),
-                     targetChrom = paste0("chr", baitChr),
-                     targetStart = as.numeric(baitStart),
-                     targetEnd = as.numeric(baitEnd)) %>%
-    dplyr::mutate(chrom = sourceChrom,
-                  chromStart = floor((sourceStart + targetStart) / 2),
-                  chromEnd = floor((sourceEnd + targetEnd) / 2)) %>%
-    dplyr::mutate(value = 5, exp = ".", color = "255,0,0",
-                  name = ".", score = 500,
-                  sourceName = "OtherEnd:enhancer", sourceStrand = ".",
-                  targetName = "Bait:promoter", targetStrand = ".") %>%
-    dplyr::select(all_of(ucsc.order.cols))
-}
-
-
-format_and_write_ucsc_interactions <- function(interactions.for.ucsc, file){
-
-  out <-
-    interactions.for.ucsc %>%
-    drop_na() %>% # need distance to be non-missing to visualize...
-    makeGRangesFromDataFrame(seqnames.field = "chrom",
-                             start.field = "chromStart",
-                             end.field = "chromEnd",
-                             keep.extra.columns = T,
-                             ignore.strand = T)
-
-  # Extra processing
-  genome(out) <- "hg38"
-
-  lengths <- get_ucsc_seqlengths()
-
-  # Allows us to get the indices to "duplicate" the
-  # lengths the appropriate number of times. E.g., chr1 is 1mb,
-  # then if there are five itneractions, we have 1mb, 1mb, 1mb, 1mb, 1mb
-  ix <- as.vector(match(seqnames(out), names(lengths)))
-
-  # Which interactions are in correct range
-  keep.ix <- (end(out) <= lengths[ix]) & (start(out) <= lengths[ix])
-
-  # Subset
-  out.trimmed <- out[keep.ix, ]
-  seqlengths(out.trimmed) <- lengths
-
-  # Write write write
-  rtracklayer::export.bb(out.trimmed, file)
-  file
-}
-
 
 
 

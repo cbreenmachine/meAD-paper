@@ -502,55 +502,6 @@ symbols_to_gene_ontology_routine <- function(symbols){
 
 # Export UCSC Genome Browser ----------------------------------------------
 
-get_ucsc_seqlengths <- function(){
-  good.chr <- paste0("chr", 1:22)
-
-  db <- get_ensdb()
-  seqlevelsStyle(db) <- "NCBI"
-
-  # Usually pings to say "[some weird scaffold] didn't map"
-  suppressWarnings(seqlengths(db)[good.chr])
-}
-
-
-#TODO: refactor
-format_and_write_ucsc_lolly <- function(data.gr, file, lfdr.cut, keep.nth=25){
-  # data.gr is pvals.gr or something similar
-  # alpha.cut is the level of significance
-  # keep.nth is how much to thin by (keep every 25th non-significant point)
-
-  colors <- get_hyper_hypo_colors(rgb = T)
-
-  # Thin the points
-  keepix <- c(
-    which(data.gr$lfdr <= lfdr.cut),
-    which(data.gr$lfdr > lfdr.cut)[c( rep(FALSE, keep.nth-1), TRUE)]
-  )
-
-
-  # Thin data
-  out <- data.gr[keepix, ]
-
-  # Manipulate the metadata columns to get in UCSC lolly format
-  mdata.cleaned <- mcols(out) %>%
-    as.data.frame() %>%
-    dplyr::transmute(name = ".",
-                     score = round(y),
-                     thickStart = start(out),
-                     thickEnd = end(out),
-                     color = ifelse(pi.diff < 0, colors$hypo, colors$hyper),
-                     lollySize = ifelse(lfdr < lfdr.cut, 4, 1))
-
-  mdata.cleaned$color[mdata.cleaned$lollySize == 1] <- "220,220,220"
-
-  mcols(out) <- mdata.cleaned
-  genome(out) <- "hg38"
-  seqlengths(out) <- get_ucsc_seqlengths()
-
-  # Write and return
-  rtracklayer::export.bb(out, file)
-  return(file)
-}
 
 
 liftover_wrapper <- function(gr, chain){

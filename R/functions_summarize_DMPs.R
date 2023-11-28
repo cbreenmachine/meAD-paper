@@ -27,6 +27,11 @@ CPG.LEVELS <- c("Open sea", "CpG island", "CpG shelf", "CpG shore", "Other")
 # Helper functions --------------------------------------------------------
 
 
+annotate_dmps_to_intron_exon <- function(data.gr){
+  my.anno <- annotatr::build_annotations(genome = 'hg38', annotations = 'hg38_basicgenes')
+}
+
+
 annotate_loci_to_genic_parts <- function(data.gr, annotate.to = 'hg38_basicgenes'){
 
   if ("hg38_basicgenes" %in% annotate.to){
